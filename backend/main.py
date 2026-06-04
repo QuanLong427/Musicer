@@ -1,0 +1,93 @@
+from dotenv import load_dotenv
+from pathlib import Path
+
+# 加载项目根目录的 .env 和 .env.local 文件（backend 的父目录）
+_project_root = Path(__file__).resolve().parent.parent
+load_dotenv(_project_root / ".env", override=False)
+load_dotenv(_project_root / ".env.local", override=True)
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from config import settings
+from routers import bili, chat, dream, history, scenario, search, tracks, wiki
+
+logger = logging.getLogger(__name__)
+
+# ── Dream Background Scheduler ───────────────────────────────────────────────
+
+_dream_task = None
+
+async def _dream_scheduler():
+    """Background task: trigger Dream engine every DREAM_INTERVAL_HOURS."""
+    interval = getattr(settings, "DREAM_INTERVAL_HOURS", 24) * 3600
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            from services.dream_engine import run_dream
+            result = run_dream()
+            logger.info(f"[dream-scheduler] Auto Dream completed: {result}")
+        except Exception as e:
+            logger.error(f"[dream-scheduler] Dream failed: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events."""
+    global _dream_task
+
+    # Startup: init system files
+    try:
+        from services.system_init import init_system_files
+        init_system_files()
+    except Exception as e:
+        logger.error(f"[startup] System init failed: {e}")
+
+    # Startup: start dream scheduler
+    _dream_task = asyncio.create_task(_dream_scheduler())
+    logger.info(f"[startup] Dream scheduler started (interval: {getattr(settings, 'DREAM_INTERVAL_HOURS', 24)}h)")
+
+    yield
+
+    # Shutdown
+    if _dream_task:
+        _dream_task.cancel()
+        try:
+            await _dream_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("[shutdown] Dream scheduler stopped")
+
+
+app = FastAPI(title="Musicer Backend", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(bili.router)
+app.include_router(chat.router)
+app.include_router(dream.router)
+app.include_router(history.router)
+app.include_router(scenario.router)
+app.include_router(search.router)
+app.include_router(tracks.router)
+app.include_router(wiki.router)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=True)

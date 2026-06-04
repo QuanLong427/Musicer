@@ -1,0 +1,55 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+
+def test_health_endpoint():
+    """Test health check endpoint."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_search_missing_query():
+    """Test search endpoint returns results even with empty query."""
+    response = client.get("/api/search")
+    assert response.status_code == 200
+    data = response.json()
+    assert "total" in data
+    assert "tracks" in data
+
+
+def test_bili_search_missing_keyword():
+    """Test bili search endpoint rejects missing keyword."""
+    response = client.get("/api/bili/search")
+    assert response.status_code == 422  # FastAPI validation error
+
+
+def test_bili_danmaku_missing_bvid():
+    """Test bili danmaku endpoint rejects missing bvid."""
+    response = client.get("/api/bili/danmaku")
+    assert response.status_code == 422  # FastAPI validation error
+
+
+def test_tracks_scan_missing_subdir():
+    """Test tracks scan endpoint rejects missing subDir."""
+    response = client.get("/api/tracks/scan")
+    assert response.status_code == 422  # FastAPI validation error
+
+
+def test_tracks_serve_path_traversal():
+    """Test path traversal protection."""
+    response = client.get("/api/tracks/../../etc/passwd")
+    assert response.status_code in [403, 404]
+
+
+def test_chat_missing_message():
+    """Test chat endpoint rejects empty message."""
+    response = client.post("/api/chat", json={"message": ""})
+    assert response.status_code == 400

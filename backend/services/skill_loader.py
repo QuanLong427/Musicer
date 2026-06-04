@@ -1,0 +1,94 @@
+"""
+Skill Loader — Agent Skills 标准实现
+
+遵循 Agent Skills 规范（agentskills.io/specification）：
+- discover_skills(): 扫描目录，读取 frontmatter
+- load_skill(): 按需加载完整 SKILL.md 正文
+"""
+
+import re
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+SKILL_FILENAME = "SKILL.md"
+DEFAULT_SKILLS_LIBRARY = Path(__file__).resolve().parent.parent.parent / "skills"
+
+# YAML frontmatter pattern: --- ... ---
+FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def _parse_frontmatter(raw: str) -> Dict[str, str]:
+    """Parse YAML frontmatter from SKILL.md content."""
+    meta: Dict[str, str] = {}
+    m = FRONTMATTER_PATTERN.match(raw)
+    if not m:
+        return meta
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip().strip('"').strip("'")
+    return meta
+
+
+def discover_skills(skills_root: Optional[Path] = None) -> List[Dict[str, str]]:
+    """
+    发现技能：扫描技能库目录，读取每个子目录中的 SKILL.md 的 frontmatter（name、description）。
+    符合 Agent Skills 的 Progressive disclosure：仅加载元数据（约 100 tokens/Skill）。
+
+    Args:
+        skills_root: 技能库根目录，默认 DEFAULT_SKILLS_LIBRARY。
+
+    Returns:
+        列表，每项为 {"name": str, "description": str, ...}，按 name 排序。
+    """
+    root = Path(skills_root) if skills_root else DEFAULT_SKILLS_LIBRARY
+    if not root.is_dir():
+        return []
+
+    result: List[Dict[str, str]] = []
+    for path in sorted(root.iterdir()):
+        if not path.is_dir():
+            continue
+        skill_md = path / SKILL_FILENAME
+        if not skill_md.is_file():
+            continue
+        try:
+            raw = skill_md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        meta = _parse_frontmatter(raw)
+        if meta.get("name"):
+            result.append(meta)
+    return result
+
+
+def load_skill(skill_name: str, skills_root: Optional[Path] = None) -> Tuple[str, str]:
+    """
+    加载技能：读取指定技能目录下的完整 SKILL.md 内容（正文 + 可选 frontmatter）。
+    仅在「选择」该技能后调用，符合按需加载。
+
+    Args:
+        skill_name: 技能名称，对应子目录名（如 local-search、cloud-search）。
+        skills_root: 技能库根目录，默认 DEFAULT_SKILLS_LIBRARY。
+
+    Returns:
+        (full_content, body_only)。full_content 为完整文件内容；body_only 为去掉 frontmatter 的正文。
+    """
+    root = Path(skills_root) if skills_root else DEFAULT_SKILLS_LIBRARY
+    skill_dir = root / skill_name
+    skill_md = skill_dir / SKILL_FILENAME
+    if not skill_md.is_file():
+        return "", ""
+
+    try:
+        full = skill_md.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "", ""
+
+    # 去掉 frontmatter 得到正文（供 LLM 使用）
+    body = full
+    m = FRONTMATTER_PATTERN.match(full)
+    if m:
+        body = full[m.end():].strip()
+    return full, body

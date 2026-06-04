@@ -1,0 +1,249 @@
+@import "tailwindcss";
+
+/* ─── Design tokens (Glassmorphism Modern + Sci-Fi) ─── */
+:root {
+  /* Surface & glass layers */
+  --color-surface: #06060f;
+  --color-on-surface: #e8e8f0;
+  --color-on-surface-muted: #6b6b82;
+
+  /* Glass */
+  --glass-bg: rgba(255, 255, 255, 0.04);
+  --glass-bg-hover: rgba(255, 255, 255, 0.07);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-strong: rgba(255, 255, 255, 0.14);
+  --glass-blur: 20px;
+
+  /* Brand */
+  --color-primary: #7c8cf8;
+  --color-primary-soft: #5b6cf0;
+  --color-primary-glow: rgba(124, 140, 248, 0.2);
+  --color-secondary: #b0a0f0;
+  --color-on-primary: #ffffff;
+
+  /* CTA / Accent */
+  --color-cta: #30d9a0;
+  --color-cta-glow: rgba(48, 217, 160, 0.15);
+
+  /* Borders & outlines */
+  --color-outline: #505068;
+  --color-outline-variant: rgba(255, 255, 255, 0.06);
+
+  /* Semantic */
+  --color-error: #f06880;
+  --color-on-error: #ffffff;
+
+  /* Shadows */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 20px var(--color-primary-glow);
+
+  /* Layout rhythm */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --progress-height: 3px;
+  --playhead-size: 14px;
+
+  /* Motion */
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 150ms;
+  --dur-normal: 250ms;
+
+  /* Typography */
+  --font-headline: var(--font-dm-sans, "DM Sans", ui-sans-serif, system-ui, sans-serif);
+  --font-body: var(--font-dm-sans, "DM Sans", ui-sans-serif, system-ui, sans-serif);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --tracking-headline: -0.01em;
+  --tracking-label: 0.06em;
+}
+
+@theme inline {
+  --font-body: var(--font-dm-sans, "DM Sans", ui-sans-serif, system-ui, sans-serif);
+  --font-headline: var(--font-dm-sans, "DM Sans", ui-sans-serif, system-ui, sans-serif);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-headline);
+
+  --color-surface: #06060f;
+  --color-on-surface: #e8e8f0;
+  --color-on-surface-muted: #6b6b82;
+  --color-primary: #7c8cf8;
+  --color-primary-soft: #5b6cf0;
+  --color-secondary: #b0a0f0;
+  --color-on-primary: #ffffff;
+  --color-cta: #30d9a0;
+  --color-outline: #505068;
+  --color-outline-variant: rgba(255, 255, 255, 0.06);
+  --color-error: #f06880;
+  --color-on-error: #ffffff;
+  --color-background: #06060f;
+  --color-foreground: #e8e8f0;
+
+  --animate-glow-pulse: glow-pulse 2s ease-in-out infinite;
+  --animate-fade-in: fade-in 0.3s var(--ease-smooth);
+}
+
+/* ─── Keyframes ─── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes thinking-dot {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes orbit {
+  from { transform: rotateY(0deg) translateZ(var(--orbit-radius)) rotateY(0deg); }
+  to   { transform: rotateY(360deg) translateZ(var(--orbit-radius)) rotateY(-360deg); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ─── Base ─── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-headline);
+  letter-spacing: var(--tracking-headline);
+  font-weight: 600;
+}
+
+label {
+  font-family: var(--font-headline);
+  letter-spacing: var(--tracking-label);
+  font-size: 0.75rem;
+}
+
+/* ─── Glass utilities ─── */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border-strong);
+}
+
+/* ─── Sci-fi background ─── */
+.aurora-bg {
+  background:
+    radial-gradient(ellipse 80% 50% at 25% 35%, rgba(91, 108, 240, 0.1), transparent),
+    radial-gradient(ellipse 60% 40% at 75% 25%, rgba(176, 160, 240, 0.08), transparent),
+    radial-gradient(ellipse 50% 30% at 55% 75%, rgba(48, 217, 160, 0.04), transparent),
+    linear-gradient(180deg, #06060f 0%, #0a0a1a 50%, #06060f 100%);
+  background-size: 200% 200%;
+  animation: gradient-shift 20s ease infinite;
+}
+
+/* Subtle grid overlay */
+.aurora-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(124, 140, 248, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 140, 248, 0.02) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ─── Scrollbars ─── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ─── Progress track ─── */
+.glass-progress {
+  position: relative;
+  height: var(--progress-height);
+  width: 100%;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: visible;
+}
+
+.glass-progress-fill {
+  height: 100%;
+  width: var(--progress-pct, 0%);
+  max-width: 100%;
+  background: linear-gradient(90deg, var(--color-primary-soft), var(--color-primary));
+  border-radius: 2px;
+  box-shadow: 0 0 10px var(--color-primary-glow);
+  transition: width 0.1s linear;
+}
+
+.glass-progress-crab {
+  position: absolute;
+  top: 50%;
+  left: var(--progress-pct, 0%);
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(0 0 6px var(--color-primary-glow));
+  cursor: grab;
+  transition: left 0.1s linear;
+}
+
+.glass-progress-crab:active {
+  cursor: grabbing;
+}
+
+/* ─── Selection ─── */
+::selection {
+  background: rgba(124, 140, 248, 0.25);
+  color: #fff;
+}

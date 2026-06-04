@@ -1,0 +1,160 @@
+import os
+import re
+from pathlib import Path
+from urllib.parse import quote
+
+from config import settings
+from models import Track
+
+
+def _is_year(s: str) -> bool:
+    return bool(re.match(r"^\d{4}$", s)) and "1990" <= s <= "2030"
+
+
+def _is_num(s: str) -> bool:
+    return bool(re.match(r"^\d{1,2}$", s))
+
+
+def parse_name(name: str) -> dict[str, str | None]:
+    bvid = ""
+    bvid_match = re.search(r"[_ ]BV([A-Za-z0-9]+)$", name)
+    if bvid_match:
+        bvid = f"BV{bvid_match.group(1)}"
+        name = name[: -len(bvid_match.group(0))]
+
+    parts = name.split("-")
+    n = len(parts)
+
+    if n >= 4:
+        y, m, d = parts[n - 3], parts[n - 2], parts[n - 1]
+        if _is_year(y) and _is_num(m) and _is_num(d):
+            date = f"{y}-{m}-{d}"
+            if n >= 5:
+                return {
+                    "title": "-".join(parts[: n - 4]).strip(),
+                    "author": parts[n - 4].strip(),
+                    "date": date,
+                    "bvid": bvid or None,
+                }
+            return {
+                "title": "-".join(parts[: n - 3]).strip(),
+                "author": "",
+                "date": date,
+                "bvid": bvid or None,
+            }
+
+    return {"title": name, "author": "", "date": "", "bvid": bvid or None}
+
+
+def scan_tracks() -> list[Track]:
+    music_dir = settings.MUSIC_DIR
+    tracks: list[Track] = []
+
+    try:
+        dirs = [
+            d for d in os.scandir(music_dir)
+            if d.is_dir()
+        ]
+    except FileNotFoundError:
+        return tracks
+
+    for entry in dirs:
+        sub_dir = entry.name
+        try:
+            files = [
+                f for f in os.scandir(entry.path)
+                if f.is_file() and f.name.lower().endswith(".mp3")
+            ]
+        except Exception:
+            continue
+
+        for f in files:
+            try:
+                size = f.stat().st_size
+            except Exception:
+                size = 0
+
+            base_name = f.name[:-4]  # remove .mp3
+            parsed = parse_name(base_name)
+
+            track = Track(
+                id=f"{sub_dir}/{f.name}",
+                title=parsed["title"] or "",
+                author=parsed["author"] or "",
+                date=parsed["date"] or "",
+                filename=f.name,
+                subDir=sub_dir,
+                size=size,
+                url=f'/api/tracks/{quote(sub_dir, safe="")}/{quote(f.name, safe="")}',
+                bvid=parsed["bvid"],
+            )
+            tracks.append(track)
+
+    return tracks
+
+
+def search_tracks(query: str, limit: int = 20) -> list[Track]:
+    all_tracks = scan_tracks()
+    if not query:
+        return all_tracks[:limit]
+
+    q = query.lower()
+    filtered = [
+        t for t in all_tracks
+        if q in f"{t.title} {t.author} {t.filename}".lower()
+    ]
+    return filtered[:limit]
+
+
+def scan_subdir(sub_dir: str) -> list[Track]:
+    music_dir = settings.MUSIC_DIR
+    dir_path = Path(music_dir) / sub_dir
+
+    # Path traversal protection
+    try:
+        dir_path.resolve().relative_to(Path(music_dir).resolve())
+    except ValueError:
+        return []
+
+    tracks: list[Track] = []
+    try:
+        files = [
+            f for f in os.scandir(dir_path)
+            if f.is_file() and f.name.lower().endswith(".mp3")
+        ]
+    except FileNotFoundError:
+        return tracks
+
+    for f in files:
+        try:
+            size = f.stat().st_size
+        except Exception:
+            size = 0
+
+        base_name = f.name[:-4]
+        parsed = parse_name(base_name)
+
+        track = Track(
+            id=f"{sub_dir}/{f.name}",
+            title=parsed["title"] or "",
+            author=parsed["author"] or "",
+            date=parsed["date"] or "",
+            filename=f.name,
+            subDir=sub_dir,
+            size=size,
+            url=f'/api/tracks/{quote(sub_dir, safe="")}/{quote(f.name, safe="")}',
+            bvid=parsed["bvid"],
+        )
+        tracks.append(track)
+
+    return tracks
+
+
+def resolve_music_path(relative_path: str) -> str | None:
+    music_dir = Path(settings.MUSIC_DIR)
+    full = (music_dir / relative_path).resolve()
+    if not str(full).startswith(str(music_dir.resolve())):
+        return None
+    if not full.is_file():
+        return None
+    return str(full)
