@@ -376,7 +376,7 @@ export function ChatMessage({ message: m }: Props) {
   return (
     <article className={`mb-4 flex w-full animate-fade-in ${wrapperClass}`}>
       <div
-        className="max-w-[min(100%,38rem)] px-4 py-3"
+        className="max-w-[min(100%,38rem)] overflow-hidden px-4 py-3"
         style={bubbleStyle}
       >
         <div

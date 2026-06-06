@@ -7,13 +7,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const LOOKAHEAD = 0.3;
 const DANMAKU_TTL = 9000;
-const DRIFT_STEPS = 8;
-const BOUNDARY_LEFT = 8;
-const BOUNDARY_RIGHT = 80;
+const DRIFT_STEPS = 12;
 
 type ActiveDanmaku = DanmakuItem & {
   spawnId: number;
-  left: number;
+  status: "pending" | "active";
+  initialX: number;
+  textW: number;
   duration: number;
   delay: number;
   hasBorder: boolean;
@@ -28,22 +28,21 @@ function seededRandom(seed: number) {
   return x - Math.floor(x);
 }
 
-function clamp(val: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, val));
-}
-
 /**
- * 生成弹幕的漂移路径 keyframes CSS 字符串。
- * 弹幕从 startX 出发，每步水平漂移一定距离，
- * 碰到左右边界时弹回（钳制到边界内）。
+ * Generate drift keyframes with smooth bounce-back at boundaries.
+ * Uses ease-in-out style intermediate frames near bounce points.
  */
 function generateDriftKeyframes(
-  startX: number,
+  initialX: number,
   driftSpeed: number,
-  _duration: number,
+  duration: number,
+  boundaryLeft: number,
+  boundaryRight: number,
+  spawnId: number,
 ): string {
   const frames: string[] = [];
-  let x = startX;
+  let x = initialX;
+  let dir = driftSpeed >= 0 ? 1 : -1;
 
   for (let i = 0; i <= DRIFT_STEPS; i++) {
     const pct = (i / DRIFT_STEPS) * 100;
@@ -54,22 +53,47 @@ function generateDriftKeyframes(
     else if (i >= DRIFT_STEPS - 1) opacity = "0";
 
     frames.push(
-      `${pct.toFixed(1)}% { transform: translateX(${(x - startX).toFixed(1)}vw) translateY(${yVh.toFixed(1)}vh); opacity: ${opacity}; }`,
+      `${pct.toFixed(1)}% { transform: translateX(${x.toFixed(1)}px) translateY(${yVh.toFixed(1)}vh); opacity: ${opacity}; }`,
     );
 
     if (i < DRIFT_STEPS) {
-      const stepDuration = _duration / DRIFT_STEPS;
-      const drift = driftSpeed * stepDuration * 0.03;
-      x = clamp(x + drift, BOUNDARY_LEFT, BOUNDARY_RIGHT);
+      const stepDur = duration / DRIFT_STEPS;
+      const step = Math.abs(driftSpeed) * stepDur * 0.25;
+      let next = x + dir * step;
+
+      if (next > boundaryRight) {
+        // Smooth bounce: add intermediate ease-out frame
+        const overshoot = next - boundaryRight;
+        const easePct = ((i + 0.5) / DRIFT_STEPS) * 100;
+        const easeYVh = -(((i + 0.5) / DRIFT_STEPS) * 105);
+        frames.push(
+          `${easePct.toFixed(1)}% { transform: translateX(${boundaryRight.toFixed(1)}px) translateY(${easeYVh.toFixed(1)}vh); opacity: 0.9; }`,
+        );
+        next = boundaryRight - overshoot;
+        dir = -1;
+      } else if (next < boundaryLeft) {
+        // Smooth bounce: add intermediate ease-out frame
+        const overshoot = boundaryLeft - next;
+        const easePct = ((i + 0.5) / DRIFT_STEPS) * 100;
+        const easeYVh = -(((i + 0.5) / DRIFT_STEPS) * 105);
+        frames.push(
+          `${easePct.toFixed(1)}% { transform: translateX(${boundaryLeft.toFixed(1)}px) translateY(${easeYVh.toFixed(1)}vh); opacity: 0.9; }`,
+        );
+        next = boundaryLeft + overshoot;
+        dir = 1;
+      }
+      x = next;
     }
   }
 
-  return `@keyframes dm-drift-${spawnIdCounter} { ${frames.join(" ")} }`;
+  return `@keyframes dm-drift-${spawnId} { ${frames.join(" ")} }`;
 }
 
 export function DanmakuOverlay() {
   const { state } = usePlayer();
   const { enabled, currentDanmaku } = useDanmaku();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerWidthRef = useRef(600);
 
   const [active, setActive] = useState<ActiveDanmaku[]>([]);
   const lastProgressRef = useRef(0);
@@ -77,21 +101,111 @@ export function DanmakuOverlay() {
 
   const progress = state.progress;
 
+  // ResizeObserver: track container width
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    containerWidthRef.current = el.clientWidth;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        containerWidthRef.current = entry.contentRect.width;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Phase 2: Measure pending danmaku widths and activate them
+  useEffect(() => {
+    const pending = active.filter((d) => d.status === "pending");
+    if (!pending.length) return;
+
+    const w = containerWidthRef.current;
+
+    const toActivate: ActiveDanmaku[] = [];
+
+    for (const d of pending) {
+      const el = containerRef.current?.querySelector(
+        `[data-dm-id="${d.spawnId}"]`,
+      ) as HTMLElement | null;
+      if (!el) continue;
+
+      // Measure actual rendered width (includes px-5 padding)
+      const textW = el.getBoundingClientRect().width;
+
+      // Center-based positioning: center ∈ [textW/2, containerWidth - textW/2]
+      const halfW = textW / 2;
+      const minCenter = halfW;
+      const maxCenter = w - halfW;
+      const center = minCenter + seededRandom(d.spawnId + 100) * Math.max(maxCenter - minCenter, 1);
+
+      // leftEdge = center - textW/2
+      const leftEdge = center - halfW;
+
+      // Boundaries for drift: 弹幕左边缘 ∈ [0, containerWidth - textW - SAFETY]
+      const SAFETY = 20;
+      const bL = SAFETY;
+      const bR = w - textW - SAFETY;
+
+      const keyframes = generateDriftKeyframes(
+        leftEdge,
+        d.borderHue, // using as temp — will be overwritten
+        d.duration,
+        bL,
+        bR,
+        d.spawnId,
+      );
+
+      toActivate.push({
+        ...d,
+        status: "active",
+        textW,
+        initialX: leftEdge,
+        keyframes: generateDriftKeyframes(
+          leftEdge,
+          (seededRandom(d.spawnId + 5) - 0.5) * 50,
+          d.duration,
+          bL,
+          bR,
+          d.spawnId,
+        ),
+      });
+    }
+
+    if (toActivate.length) {
+      setActive((prev) =>
+        prev.map((d) => {
+          const activated = toActivate.find((a) => a.spawnId === d.spawnId);
+          return activated ?? d;
+        }),
+      );
+    }
+  }, [active]);
+
+  // Phase 1: Spawn danmaku as pending (measured later)
   const spawnDanmaku = useCallback((item: DanmakuItem) => {
     const id = ++spawnIdCounter;
-    const r = seededRandom(id);
-    const left = 10 + r * 70;
     const duration = 5 + seededRandom(id + 1) * 4;
     const delay = seededRandom(id + 2) * 0.5;
     const hasBorder = seededRandom(id + 3) > 0.5;
     const borderHue = Math.floor(seededRandom(id + 4) * 360);
-    const driftSpeed = (seededRandom(id + 5) - 0.5) * 60;
-
-    const keyframes = generateDriftKeyframes(left, driftSpeed, duration);
 
     setActive((prev) => [
       ...prev,
-      { ...item, spawnId: id, left, duration, delay, hasBorder, borderHue, keyframes },
+      {
+        ...item,
+        spawnId: id,
+        status: "pending",
+        initialX: 0,
+        textW: 0,
+        duration,
+        delay,
+        hasBorder,
+        borderHue,
+        keyframes: "",
+      },
     ]);
     setTimeout(() => {
       setActive((prev) => prev.filter((d) => d.spawnId !== id));
@@ -132,19 +246,26 @@ export function DanmakuOverlay() {
 
   if (!enabled || !currentDanmaku.length) return null;
 
+  // Only render active (measured) danmaku, pending ones are invisible
+  const visible = active.filter((d) => d.status === "active");
+
   return (
     <div
+      ref={containerRef}
       className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
       aria-hidden
     >
-      <style>{active.map((d) => d.keyframes).join("\n")}</style>
+      <style>{visible.map((d) => d.keyframes).join("\n")}</style>
       {active.map((d) => (
         <span
           key={d.spawnId}
-          className="absolute bottom-0 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-bold"
+          data-dm-id={d.spawnId}
+          className="absolute bottom-0 left-0 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-bold"
           style={{
-            left: `${d.left}%`,
-            animation: `dm-drift-${d.spawnId} ${d.duration}s linear ${d.delay}s forwards`,
+            animation:
+              d.status === "active"
+                ? `dm-drift-${d.spawnId} ${d.duration}s linear ${d.delay}s forwards`
+                : undefined,
             opacity: 0,
             color: d.color || "var(--color-on-surface)",
             textShadow:
