@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -32,8 +33,16 @@ export function DanmakuProvider({ children }: { children: ReactNode }) {
   >({});
   const [error, setError] = useState<string | null>(null);
 
-  const { state } = usePlayer();
+  const { state, trackRemoved, clearTrackRemoved } = usePlayer();
   const bvid = state.current?.bvid ?? null;
+  const prevBvidRef = useRef<string | null>(null);
+  const danmakuMapRef = useRef<Record<string, DanmakuItem[]>>({});
+  const [activeDanmaku, setActiveDanmaku] = useState<DanmakuItem[]>([]);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    danmakuMapRef.current = danmakuMap;
+  }, [danmakuMap]);
 
   const toggleDanmaku = useCallback(() => {
     setEnabled((prev) => !prev);
@@ -68,14 +77,35 @@ export function DanmakuProvider({ children }: { children: ReactNode }) {
 
   // Auto-fetch danmaku when current track's bvid changes
   useEffect(() => {
-    console.log("[Danmaku] bvid changed:", bvid);
-    if (bvid) {
-      setError(null);
-      fetchDanmaku(bvid);
+    console.log("[Danmaku] bvid changed:", bvid, "trackRemoved:", trackRemoved);
+    if (trackRemoved) {
+      // Track was deleted — don't switch danmaku, just clear flag
+      clearTrackRemoved();
+      prevBvidRef.current = bvid;
+      return;
     }
-  }, [bvid, fetchDanmaku]);
+    // Normal bvid change — fetch and switch to new track's danmaku
+    if (bvid !== prevBvidRef.current) {
+      prevBvidRef.current = bvid;
+      if (bvid) {
+        setError(null);
+        fetchDanmaku(bvid);
+        // Set danmaku from cache if available
+        setActiveDanmaku(danmakuMapRef.current[bvid] ?? []);
+      } else {
+        setActiveDanmaku([]);
+      }
+    }
+  }, [bvid, fetchDanmaku, trackRemoved, clearTrackRemoved]);
 
-  const currentDanmaku = bvid ? danmakuMap[bvid] ?? [] : [];
+  // Update active danmaku when fetch completes
+  useEffect(() => {
+    if (prevBvidRef.current && danmakuMap[prevBvidRef.current]) {
+      setActiveDanmaku(danmakuMap[prevBvidRef.current]);
+    }
+  }, [danmakuMap]);
+
+  const currentDanmaku = activeDanmaku;
   const hasDanmaku = currentDanmaku.length > 0;
 
   const retryFetch = useCallback(() => {

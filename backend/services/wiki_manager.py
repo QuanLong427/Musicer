@@ -13,20 +13,20 @@ WIKI_SCHEMA_TEMPLATE = """# .wiki-schema.md
 - topic: Music Knowledge Base
 - created: {created}
 - language: zh
-- version: 1.0
+- version: 2.0
 
 ## Directory Structure
-- `raw/songs/` - Raw song metadata (immutable)
-- `wiki/sources/` - Source summary pages (one per song)
+- `raw/songs/` - Raw song metadata (BVID naming, immutable)
+- `wiki/entities/songs/` - Song entity pages (song name naming)
 - `wiki/entities/artists/` - Artist/band entity pages
 - `wiki/entities/genres/` - Genre/style entity pages
 - `wiki/entities/albums/` - Album entity pages
-- `wiki/topics/` - Topic pages (cross-song themes)
 - `index.md` - Master index
 - `log.md` - Operation log
+- `proposes.md` - Direction and key questions
 
 ## Entity Types
-- `song` - A music track
+- `song` - A music track (song name naming, may aggregate multiple raw BVIDs)
 - `artist` - Singer or band
 - `album` - Music album
 - `genre` - Musical style/genre
@@ -52,11 +52,10 @@ def _ensure_dirs(wiki_dir: str) -> None:
     """Create all required wiki subdirectories."""
     dirs = [
         os.path.join(wiki_dir, "raw", "songs"),
-        os.path.join(wiki_dir, "wiki", "sources"),
+        os.path.join(wiki_dir, "wiki", "entities", "songs"),
         os.path.join(wiki_dir, "wiki", "entities", "artists"),
         os.path.join(wiki_dir, "wiki", "entities", "genres"),
         os.path.join(wiki_dir, "wiki", "entities", "albums"),
-        os.path.join(wiki_dir, "wiki", "topics"),
     ]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
@@ -91,15 +90,15 @@ def init_wiki(wiki_dir: Optional[str] = None) -> Dict:
 
     # Write index.md
     index_path = os.path.join(wiki_dir, "index.md")
-    _ensure_file(index_path, "# Music Knowledge Base Index\n\n## Sources\n\n## Entities\n\n### Artists\n\n### Genres\n\n### Albums\n\n## Topics\n")
+    _ensure_file(index_path, "# Music Knowledge Base Index\n\n## Artists\n\n## Genres\n\n## Albums\n\n## Songs\n")
 
     # Write log.md
     log_path = os.path.join(wiki_dir, "log.md")
-    _ensure_file(log_path, "# Operation Log\n\n| Date | Action | Details |\n|------|--------|---------|\n")
+    _ensure_file(log_path, "# Operation Log\n\n| Date | Operation | Detail |\n|------|-----------|--------|\n")
 
-    # Write purpose.md
-    purpose_path = os.path.join(wiki_dir, "purpose.md")
-    _ensure_file(purpose_path, "# Purpose\n\n## Research Direction\nBuild a structured knowledge base of music metadata for personalized recommendations.\n\n## Key Questions\n- What genres and artists does the user prefer?\n- What are the relationships between songs, artists, and albums?\n- How do listening patterns evolve over time?\n")
+    # Write proposes.md
+    proposes_path = os.path.join(wiki_dir, "proposes.md")
+    _ensure_file(proposes_path, "# Direction\n\nBuild a structured knowledge base of music metadata for personalized recommendations.\n\n## Key Questions\n\n1. 用户在当前场景下喜欢应该会想听哪些歌手或者歌曲或者那张专辑的歌曲\n2. 用户的听歌习惯会随着时间发生哪些变化？\n3. 歌曲、流派、歌手与专辑之间存在怎样的关联？\n")
 
     return {"status": "initialized", "wiki_dir": wiki_dir}
 
@@ -112,11 +111,10 @@ def get_wiki_status(wiki_dir: Optional[str] = None) -> Dict:
     if not os.path.exists(schema_path):
         return {"initialized": False}
 
-    sources_dir = os.path.join(wiki_dir, "wiki", "sources")
+    songs_dir = os.path.join(wiki_dir, "wiki", "entities", "songs")
     artists_dir = os.path.join(wiki_dir, "wiki", "entities", "artists")
     genres_dir = os.path.join(wiki_dir, "wiki", "entities", "genres")
     albums_dir = os.path.join(wiki_dir, "wiki", "entities", "albums")
-    topics_dir = os.path.join(wiki_dir, "wiki", "topics")
 
     def count_md_files(d: str) -> int:
         if not os.path.exists(d):
@@ -139,11 +137,10 @@ def get_wiki_status(wiki_dir: Optional[str] = None) -> Dict:
     return {
         "initialized": True,
         "wiki_dir": wiki_dir,
-        "total_songs": count_md_files(sources_dir),
+        "total_songs": count_md_files(songs_dir),
         "total_artists": count_md_files(artists_dir),
         "total_genres": count_md_files(genres_dir),
         "total_albums": count_md_files(albums_dir),
-        "total_topics": count_md_files(topics_dir),
         "last_ingested_at": last_ingested,
     }
 

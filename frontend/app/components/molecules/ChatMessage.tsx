@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { Track } from "@/app/lib/types";
 import type { ChatMessage as ChatMessageModel } from "@/app/lib/types";
 import { usePlayer } from "@/app/context/PlayerContext";
@@ -116,15 +116,21 @@ function parseContent(content: string): ContentPart[] {
 type TrackExt = Track & { bvid?: string; duration?: string };
 
 function AddedCards({ tracks }: { tracks: TrackExt[] }) {
-  const { addTracks } = usePlayer();
-  const didAutoAdd = useRef(false);
+  const { state, addTracks } = usePlayer();
+  const { queueConvert, convertingSet } = useAgent();
+  const { fetchDanmaku } = useDanmaku();
+  const inPlaylist = new Set(state.playlist.map((t) => t.id));
 
-  useEffect(() => {
-    if (!didAutoAdd.current && tracks.length > 0) {
-      didAutoAdd.current = true;
-      addTracks(tracks);
+  const isCloud = tracks.some((t) => !t.filename);
+
+  const handleAdd = (track: TrackExt) => {
+    if (track.filename) {
+      addTracks([track]);
+    } else if (track.bvid) {
+      queueConvert([{ bvid: track.bvid, title: track.title, author: track.author }]);
+      fetchDanmaku(track.bvid);
     }
-  }, [tracks, addTracks]);
+  };
 
   return (
     <div
@@ -139,25 +145,37 @@ function AddedCards({ tracks }: { tracks: TrackExt[] }) {
         </span>
       </div>
       <div className="max-h-[16rem] overflow-y-auto">
-        {tracks.map((t, i) => (
-          <div
-            key={t.id || i}
-            className="flex items-center gap-2 border-b border-[var(--glass-border)] last:border-b-0 px-3 py-2"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="m-0 truncate text-sm" style={{ color: "var(--color-on-surface)" }}>
-                {t.title}
-              </p>
-              <p className="m-0 truncate text-xs text-[color:var(--color-on-surface-muted)]">
-                {t.author}
-                {t.duration && <span className="ml-2 opacity-70">{t.duration}</span>}
-              </p>
+        {tracks.map((t, i) => {
+          const btnState = getButtonState(t, inPlaylist, convertingSet);
+          const cfg = BTN_CONFIG[btnState];
+          return (
+            <div
+              key={t.id || i}
+              className="flex items-center gap-2 border-b border-[var(--glass-border)] last:border-b-0 px-3 py-2"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="m-0 truncate text-sm" style={{ color: "var(--color-on-surface)" }}>
+                  {t.title}
+                </p>
+                <p className="m-0 truncate text-xs text-[color:var(--color-on-surface-muted)]">
+                  {t.author}
+                  {t.duration && <span className="ml-2 opacity-70">{t.duration}</span>}
+                </p>
+              </div>
+              <button
+                onClick={() => handleAdd(t)}
+                disabled={cfg.disabled}
+                className="shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-all duration-200 disabled:opacity-40 hover:bg-[rgba(129,140,248,0.15)]"
+                style={{
+                  borderColor: cfg.disabled ? "var(--glass-border)" : "rgba(129,140,248,0.3)",
+                  color: cfg.disabled ? "var(--color-on-surface-muted)" : "var(--color-primary)",
+                }}
+              >
+                {cfg.label}
+              </button>
             </div>
-            <span className="shrink-0 rounded-full border border-[var(--glass-border)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-on-surface-muted)] opacity-60">
-              ADDED
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

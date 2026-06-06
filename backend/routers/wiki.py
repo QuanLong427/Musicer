@@ -1,14 +1,12 @@
 import asyncio
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from config import settings
 from services.wiki_manager import init_wiki, get_wiki_status
 from services.wiki_ingest import ingest_song
-from services.wiki_retriever import retrieve_structured
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +61,3 @@ async def wiki_ingest(req: IngestRequest):
     asyncio.create_task(_run_ingest())
 
     return {"status": "ingest_started", "title": req.title}
-
-
-@router.get("/query")
-async def wiki_query(q: str = Query(..., description="Search keyword")):
-    """Search the wiki by keyword."""
-    results = retrieve_structured(q)
-    return {"query": q, "results": results}

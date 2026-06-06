@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import bili, chat, dream, history, scenario, search, tracks, wiki
+from routers import bili, chat, dream, history, playlist, scenario, search, tracks, wiki
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"[startup] System init failed: {e}")
 
+    # Startup: init playlist database
+    try:
+        from services.playlist_store import init_playlist_db
+        init_playlist_db()
+    except Exception as e:
+        logger.error(f"[startup] Playlist DB init failed: {e}")
+
     # Startup: start dream scheduler
     _dream_task = asyncio.create_task(_dream_scheduler())
     logger.info(f"[startup] Dream scheduler started (interval: {getattr(settings, 'DREAM_INTERVAL_HOURS', 24)}h)")
@@ -77,6 +84,7 @@ app.include_router(bili.router)
 app.include_router(chat.router)
 app.include_router(dream.router)
 app.include_router(history.router)
+app.include_router(playlist.router)
 app.include_router(scenario.router)
 app.include_router(search.router)
 app.include_router(tracks.router)

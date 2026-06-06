@@ -7,14 +7,13 @@ AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于
 ## Features
 
 - **LangGraph ReAct Agent** — LLM 自主决策工具调用，多轮迭代推理，SSE 流式输出
-- **双模式切换** — 本地曲库搜索 / B站云端搜索，一键切换
+- **双模式切换** — 本地曲库搜索 / B站云端搜索
 - **B站全链路** — 视频搜索（WBI 签名）→ 转 MP3 下载 → 弹幕叠加播放 → 自动入库知识库
 - **分层记忆系统** — 短期（对话）/ 中期（JSONL 历史）/ 长期（用户画像），Dream 引擎自动沉淀
 - **LLM-Wiki 知识库** — 基于 Karpathy llm-wiki 方法论，自动消化入库歌曲为结构化知识库
 - **场景感知推荐** — 自定义场景（编程/跑步/睡觉等），每个场景独立维护偏好
-- **知识库检索子 Agent** — 独立 LangGraph 子图，硬编码检索流程 + 用户画像上下文感知
+- **知识库检索子 Agent** — 独立 LangGraph 子图，用户画像上下文感知进行个性化推荐
 - **斜杠命令** — 聊天中输入 `/reset-wiki`、`/help` 等管理命令
-- **复古终端 UI** — 赛博朋克风格，Atomic Design 组件体系，频谱可视化
 
 ## Tech Stack
 
@@ -136,10 +135,10 @@ npm run dev
 
 ## Port Configuration
 
-| 服务   | 默认端口 | 配置位置                              |
-| ------ | -------- | ------------------------------------- |
-| 前端   | 3002     | `package.json` → `scripts.dev` 中的 `-p` 参数 |
-| 后端   | 8000     | `backend/.env` → `BACKEND_PORT=8000` |
+| 服务 | 默认端口 | 配置位置                                             |
+| ---- | -------- | ---------------------------------------------------- |
+| 前端 | 3002     | `package.json` → `scripts.dev` 中的 `-p` 参数 |
+| 后端 | 8000     | `backend/.env` → `BACKEND_PORT=8000`            |
 
 修改前端端口：编辑 `package.json` 中 `dev` 脚本的 `-p` 参数。
 修改后端端口：修改 `backend/.env` 中的 `BACKEND_PORT`，重启后端。
@@ -198,30 +197,30 @@ Musicer/
 
 在聊天中输入 `/命令名` 执行管理操作：
 
-| 命令          | 说明                          |
-| ------------- | ----------------------------- |
-| `/reset-wiki` | 重置 LLM-Wiki 知识库          |
-| `/help`       | 显示所有可用命令              |
+| 命令            | 说明                 |
+| --------------- | -------------------- |
+| `/reset-wiki` | 重置 LLM-Wiki 知识库 |
+| `/help`       | 显示所有可用命令     |
 
 扩展新命令：在 `skills/slash-commands/SKILL.md` 中添加命令说明，在 `backend/services/ai_agent.py` 中添加对应的 `@tool` 函数。
 
 ## API Endpoints
 
-| 方法 | 路径                                 | 说明                            |
-| ---- | ------------------------------------ | ------------------------------- |
-| POST | `/api/chat`                        | AI Agent 聊天（SSE 流式响应）   |
-| GET  | `/api/search?q=关键词`             | 本地曲库搜索                    |
-| GET  | `/api/bili/search?keyword=关键词`  | B站视频搜索                     |
-| GET  | `/api/bili/danmaku?bvid=BVxxx`     | 获取视频弹幕                    |
-| GET  | `/api/tracks/scan?subDir=20250430` | 扫描指定日期目录                |
-| GET  | `/api/tracks/{path}`               | 服务音频文件（支持 Range 请求） |
-| POST | `/api/dream/run`                   | 手动触发 Dream 引擎             |
-| GET/POST | `/api/scenarios`                 | 场景列表 / 创建场景             |
-| DELETE | `/api/scenarios/{name}`           | 删除场景                        |
-| GET  | `/api/history`                     | 获取对话历史                    |
-| GET  | `/api/wiki/status`                 | LLM-Wiki 状态                   |
-| POST | `/api/wiki/init`                   | 初始化 LLM-Wiki                 |
-| POST | `/api/wiki/query`                  | LLM-Wiki 检索                   |
+| 方法     | 路径                                 | 说明                            |
+| -------- | ------------------------------------ | ------------------------------- |
+| POST     | `/api/chat`                        | AI Agent 聊天（SSE 流式响应）   |
+| GET      | `/api/search?q=关键词`             | 本地曲库搜索                    |
+| GET      | `/api/bili/search?keyword=关键词`  | B站视频搜索                     |
+| GET      | `/api/bili/danmaku?bvid=BVxxx`     | 获取视频弹幕                    |
+| GET      | `/api/tracks/scan?subDir=20250430` | 扫描指定日期目录                |
+| GET      | `/api/tracks/{path}`               | 服务音频文件（支持 Range 请求） |
+| POST     | `/api/dream/run`                   | 手动触发 Dream 引擎             |
+| GET/POST | `/api/scenarios`                   | 场景列表 / 创建场景             |
+| DELETE   | `/api/scenarios/{name}`            | 删除场景                        |
+| GET      | `/api/history`                     | 获取对话历史                    |
+| GET      | `/api/wiki/status`                 | LLM-Wiki 状态                   |
+| POST     | `/api/wiki/init`                   | 初始化 LLM-Wiki                 |
+| POST     | `/api/wiki/query`                  | LLM-Wiki 检索                   |
 
 ## Usage
 

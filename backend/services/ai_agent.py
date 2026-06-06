@@ -143,7 +143,7 @@ _OUTPUT_FORMAT = """
 8. title 字段必须与 API 返回值完全一致，即使很长或包含下划线等字符也不能删减"""
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(scenario: str = "默认") -> str:
     """Build system prompt with all skills loaded. LLM decides which to use."""
     discovered = discover_skills()
 
@@ -152,11 +152,13 @@ def _build_system_prompt() -> str:
 
     prompt = platform_line + _BASE_PROMPT
 
-    # 加载用户画像到 system prompt
+    # 加载场景化用户画像到 system prompt
     try:
         user_profile = read_profile()
         if user_profile.strip():
-            prompt += "\n\n## 用户音乐画像\n以下是该用户的音乐偏好画像，请参考这些偏好来推荐音乐：\n\n" + user_profile
+            scenario_profile = _extract_scenario_section(user_profile, scenario)
+            if scenario_profile:
+                prompt += "\n\n## 用户音乐画像（当前场景）\n以下是该用户在当前场景下的音乐偏好画像，请参考这些偏好来推荐音乐：\n\n" + scenario_profile
     except Exception as e:
         logger.warning(f"[prompt] Failed to load user profile: {e}")
 
@@ -167,6 +169,45 @@ def _build_system_prompt() -> str:
 
     prompt += "\n" + _OUTPUT_FORMAT
     return prompt
+
+
+def _extract_scenario_section(profile_text: str, scenario: str = "默认") -> str:
+    """Extract the matching scenario section from user_profile.md.
+
+    Falls back to '默认' if the specified scenario is not found.
+    """
+    target = scenario or "默认"
+    lines = profile_text.split("\n")
+
+    start = None
+    end = None
+    fallback_start = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("## 场景:"):
+            sname = stripped.replace("## 场景:", "").strip()
+            if sname == target:
+                start = i
+            elif sname == "默认" and fallback_start is None:
+                fallback_start = i
+            elif start is not None and end is None:
+                end = i
+
+    if start is None:
+        start = fallback_start
+    if start is None:
+        return ""
+
+    if end is None:
+        for i in range(start + 1, len(lines)):
+            if lines[i].strip().startswith("## "):
+                end = i
+                break
+        if end is None:
+            end = len(lines)
+
+    return "\n".join(lines[start:end]).strip()
 
 
 def _trigger_wiki_ingest(urls: list[str], song_meta_json: str, target_dir: str) -> None:
@@ -277,7 +318,7 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-def _build_tools() -> list:
+def _build_tools(scenario: str = "默认") -> list:
     """Build LangChain tools for the agent."""
 
     @tool
@@ -486,7 +527,7 @@ def _build_tools() -> list:
     def wiki_search(query: str) -> str:
         """Search the music knowledge base (LLM-Wiki) for information about songs, artists, genres, and albums. Use this when the user asks about music knowledge, preferences, history, or wants recommendations based on past listening. Do NOT use this when the user specifies an exact song title to play."""
         # Inject user profile summary for context-aware search
-        profile_summary = _extract_profile_summary()
+        profile_summary = _extract_profile_summary(scenario)
         enhanced_query = query
         if profile_summary:
             enhanced_query = f"{query}\n\n[用户画像参考] {profile_summary}"
@@ -522,12 +563,14 @@ def _build_tools() -> list:
 
 _WIKI_SUB_AGENT_PROMPT = """你是 Musicer 的知识库检索子 Agent。你的唯一任务是搜索 LLM-Wiki 知识库并返回结果。
 
-## 硬编码检索流程（必须严格按顺序执行）
+## 检索流程（必须严格按顺序执行）
 
-### Step 1: 读取 index.md
+### Step 1: 在 index.md 中搜索关键词
+先用 grep 在索引文件中搜索用户查询的关键词，获取匹配的实体名：
 ```bash
-cat "{wiki_dir}/index.md"
+grep -i "用户关键词" "{wiki_dir}/index.md"
 ```
+如果 index.md 很大，不要 cat 整个文件，只用 grep 获取匹配行。
 
 ### Step 2: 别名展开
 读取 `.wiki-schema.md` 的 Alias Table 部分：
@@ -537,13 +580,13 @@ grep -A 20 "## Alias Table" "{wiki_dir}/.wiki-schema.md"
 规则：A=B 时不跨组传递 B=C。将用户查询关键词按别名表展开。
 
 ### Step 3: Grep 搜索 wiki/ 目录
-用展开后的关键词搜索：
+用展开后的关键词搜索实体目录：
 ```bash
 grep -r -i -l "关键词1|关键词2|关键词3" "{wiki_dir}/wiki/"
 ```
 
 ### Step 4: 读取匹配的页面
-对每个匹配的文件，读取内容：
+对 Step 1 和 Step 3 中匹配到的文件，读取内容：
 ```bash
 cat "{wiki_dir}/wiki/entities/artists/周杰伦.md"
 ```
@@ -625,22 +668,58 @@ def _build_wiki_sub_agent():
     return graph.compile()
 
 
-def _extract_profile_summary() -> str:
-    """Extract a short summary from user_profile.md for wiki search context."""
+def _extract_profile_summary(scenario: str = "默认") -> str:
+    """Extract a short summary from user_profile.md for wiki search context.
+
+    Only extracts preferences from the matching scenario section.
+    Falls back to '默认' if the specified scenario is not found.
+    """
     try:
         profile = read_profile()
         if not profile.strip():
             return ""
         lines = profile.split("\n")
-        summary_parts = []
-        current_scenario = None
-        in_types = False
-        in_artists = False
-        for line in lines:
+
+        # Find the target scenario section
+        target_scenario = scenario or "默认"
+        scenario_start = None
+        scenario_end = None
+        fallback_start = None
+        fallback_end = None
+        for i, line in enumerate(lines):
             stripped = line.strip()
             if stripped.startswith("## 场景:"):
-                current_scenario = stripped.replace("## 场景:", "").strip()
-            elif stripped == "### 最爱音乐类型":
+                sname = stripped.replace("## 场景:", "").strip()
+                if sname == target_scenario:
+                    scenario_start = i
+                elif sname == "默认" and fallback_start is None:
+                    fallback_start = i
+                elif scenario_start is not None and scenario_end is None:
+                    # Previous scenario ended, mark boundary
+                    scenario_end = i
+
+        # If target scenario not found, use fallback
+        if scenario_start is None:
+            scenario_start = fallback_start
+        if scenario_start is None:
+            return ""
+
+        # Find end of scenario section (next ## or EOF)
+        if scenario_end is None:
+            for i in range(scenario_start + 1, len(lines)):
+                if lines[i].strip().startswith("## "):
+                    scenario_end = i
+                    break
+            if scenario_end is None:
+                scenario_end = len(lines)
+
+        # Extract from scenario section only
+        summary_parts = []
+        in_types = False
+        in_artists = False
+        for i in range(scenario_start, scenario_end):
+            stripped = lines[i].strip()
+            if stripped == "### 最爱音乐类型":
                 in_types = True
                 in_artists = False
             elif stripped == "### 核心偏好歌手/乐队":
@@ -650,17 +729,18 @@ def _extract_profile_summary() -> str:
                 in_types = False
                 in_artists = False
             elif in_types and stripped.startswith(("1.", "2.", "3.")):
-                summary_parts.append(f"{current_scenario or '默认'}: {stripped}")
+                summary_parts.append(stripped)
             elif in_artists and stripped.startswith("* "):
-                summary_parts.append(f"{current_scenario or '默认'}: {stripped}")
+                summary_parts.append(stripped)
             if len(summary_parts) >= 10:
                 break
+
         return "; ".join(summary_parts) if summary_parts else ""
     except Exception:
         return ""
 
 
-def _build_agent(system_prompt: str):
+def _build_agent(system_prompt: str, scenario: str = "默认"):
     """Build a LangGraph React Agent with the given system prompt."""
     from langchain_openai import ChatOpenAI
 
@@ -672,7 +752,7 @@ def _build_agent(system_prompt: str):
         streaming=True,
     )
 
-    tools = _build_tools()
+    tools = _build_tools(scenario)
     llm_with_tools = llm.bind_tools(tools)
 
     def agent_node(state: AgentState) -> dict:
@@ -750,8 +830,8 @@ async def chat_stream(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream agent responses as SSE events."""
     try:
-        system_prompt = _build_system_prompt()
-        agent = _build_agent(system_prompt)
+        system_prompt = _build_system_prompt(scenario)
+        agent = _build_agent(system_prompt, scenario)
     except Exception as e:
         yield {"event": "error", "data": {"error": f"Agent init failed: {e}"}}
         return

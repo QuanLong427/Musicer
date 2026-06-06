@@ -6,7 +6,6 @@ import { Label } from "@/app/components/atoms/Label";
 import { ChatMessage } from "@/app/components/molecules/ChatMessage";
 import { CommandInput } from "@/app/components/molecules/CommandInput";
 import { ScenarioSelect } from "@/app/components/molecules/ScenarioSelect";
-import { WikiQuery } from "@/app/components/molecules/WikiQuery";
 import { useAgent } from "@/app/context/AgentContext";
 import { useEffect, useMemo, useRef } from "react";
 
@@ -94,7 +93,6 @@ export function AgentChat() {
           AI ASSISTANT
         </Label>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <WikiQuery />
           <ScenarioSelect value={currentScenario} onChange={setCurrentScenario} />
           {loading ? (
             <Badge label="THINKING" variant="primary" />

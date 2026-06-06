@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const LOOKAHEAD = 0.3;
 const DANMAKU_TTL = 9000;
 const DRIFT_STEPS = 12;
+const SKIP_BEFORE = 1.0; // Skip danmaku before this time (e.g. opening "你好")
 
 type ActiveDanmaku = DanmakuItem & {
   spawnId: number;
@@ -24,13 +25,17 @@ type ActiveDanmaku = DanmakuItem & {
 let spawnIdCounter = 0;
 
 function seededRandom(seed: number) {
-  const x = Math.sin(seed * 9301 + 49297) * 233280;
-  return x - Math.floor(x);
+  let h = seed | 0;
+  h = (h ^ 61) ^ (h >>> 16);
+  h = h + (h << 3);
+  h = h ^ (h >>> 4);
+  h = (h * 0x27d4eb2d) | 0;
+  h = h ^ (h >>> 15);
+  return (h >>> 0) / 4294967296;
 }
 
 /**
- * Generate drift keyframes with smooth bounce-back at boundaries.
- * Uses ease-in-out style intermediate frames near bounce points.
+ * Generate drift keyframes. Clamps position to stay within boundaries.
  */
 function generateDriftKeyframes(
   initialX: number,
@@ -42,7 +47,8 @@ function generateDriftKeyframes(
 ): string {
   const frames: string[] = [];
   let x = initialX;
-  let dir = driftSpeed >= 0 ? 1 : -1;
+  const dir = driftSpeed >= 0 ? 1 : -1;
+  const absSpeed = Math.abs(driftSpeed);
 
   for (let i = 0; i <= DRIFT_STEPS; i++) {
     const pct = (i / DRIFT_STEPS) * 100;
@@ -52,37 +58,17 @@ function generateDriftKeyframes(
     else if (i === 1) opacity = "0.9";
     else if (i >= DRIFT_STEPS - 1) opacity = "0";
 
+    // Clamp x to boundaries
+    const clampedX = Math.max(boundaryLeft, Math.min(boundaryRight, x));
+
     frames.push(
-      `${pct.toFixed(1)}% { transform: translateX(${x.toFixed(1)}px) translateY(${yVh.toFixed(1)}vh); opacity: ${opacity}; }`,
+      `${pct.toFixed(1)}% { transform: translateX(${clampedX.toFixed(1)}px) translateY(${yVh.toFixed(1)}vh); opacity: ${opacity}; }`,
     );
 
     if (i < DRIFT_STEPS) {
       const stepDur = duration / DRIFT_STEPS;
-      const step = Math.abs(driftSpeed) * stepDur * 0.25;
-      let next = x + dir * step;
-
-      if (next > boundaryRight) {
-        // Smooth bounce: add intermediate ease-out frame
-        const overshoot = next - boundaryRight;
-        const easePct = ((i + 0.5) / DRIFT_STEPS) * 100;
-        const easeYVh = -(((i + 0.5) / DRIFT_STEPS) * 105);
-        frames.push(
-          `${easePct.toFixed(1)}% { transform: translateX(${boundaryRight.toFixed(1)}px) translateY(${easeYVh.toFixed(1)}vh); opacity: 0.9; }`,
-        );
-        next = boundaryRight - overshoot;
-        dir = -1;
-      } else if (next < boundaryLeft) {
-        // Smooth bounce: add intermediate ease-out frame
-        const overshoot = boundaryLeft - next;
-        const easePct = ((i + 0.5) / DRIFT_STEPS) * 100;
-        const easeYVh = -(((i + 0.5) / DRIFT_STEPS) * 105);
-        frames.push(
-          `${easePct.toFixed(1)}% { transform: translateX(${boundaryLeft.toFixed(1)}px) translateY(${easeYVh.toFixed(1)}vh); opacity: 0.9; }`,
-        );
-        next = boundaryLeft + overshoot;
-        dir = 1;
-      }
-      x = next;
+      const step = absSpeed * stepDur * 0.25;
+      x = x + dir * step;
     }
   }
 
@@ -238,7 +224,9 @@ export function DanmakuOverlay() {
     const items = currentDanmaku;
     let idx = lastIndexRef.current;
     while (idx < items.length && items[idx]!.time <= target) {
-      spawnDanmaku(items[idx]!);
+      if (items[idx]!.time >= SKIP_BEFORE) {
+        spawnDanmaku(items[idx]!);
+      }
       idx++;
     }
     lastIndexRef.current = idx;

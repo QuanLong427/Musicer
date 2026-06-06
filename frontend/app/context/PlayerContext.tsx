@@ -2,6 +2,7 @@
 
 import type { Track, PlayerState } from "@/app/lib/types";
 import { useAudioPlayer } from "@/app/hooks/useAudioPlayer";
+import { apiUrl } from "@/app/lib/api";
 import {
   createContext,
   useCallback,
@@ -25,6 +26,8 @@ type PlayerCtx = {
   setVolume: (n: number) => void;
   stop: () => void;
   audioRef: React.RefObject<HTMLAudioElement | null>;
+  trackRemoved: boolean;
+  clearTrackRemoved: () => void;
 };
 
 const PlayerContext = createContext<PlayerCtx | null>(null);
@@ -37,6 +40,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const indexRef = useRef(-1);
   const playTrackInternalRef = useRef<(track: Track) => void>(() => {});
   const shouldPauseRef = useRef(false);
+  const [trackRemoved, setTrackRemoved] = useState(false);
+
+  // ── Playlist persistence ──────────────────────────────────────────────
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const syncToBackend = useCallback((tracks: Track[]) => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      fetch(apiUrl("/api/playlist"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tracks }),
+      }).catch(() => {});
+    }, 500);
+  }, []);
+
+  // Load playlist from backend on mount
+  useEffect(() => {
+    fetch(apiUrl("/api/playlist"))
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
+          setPlaylist(data.tracks);
+          playlistRef.current = data.tracks;
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     playlistRef.current = playlist;
@@ -90,6 +121,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!fresh.length) return prev;
       const next = [...prev, ...fresh];
       playlistRef.current = next;
+      syncToBackend(next);
       return next;
     });
 
@@ -102,7 +134,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         playTrack(first);
       }
     }
-  }, [playTrack]);
+  }, [playTrack, syncToBackend]);
 
   const removeTrack = useCallback(
     (trackId: string) => {
@@ -112,11 +144,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const next = [...prev];
         next.splice(rmIdx, 1);
         playlistRef.current = next;
+        syncToBackend(next);
 
         const curIdx = indexRef.current;
 
         if (rmIdx === curIdx) {
           // removing the currently playing track
+          setTrackRemoved(true);
           if (next.length === 0) {
             setIndex(-1);
             indexRef.current = -1;
@@ -145,7 +179,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return next;
       });
     },
-    [playTrack, playing]
+    [playTrack, playing, syncToBackend]
   );
 
   const playTrackWrapped = useCallback(
@@ -155,6 +189,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const i = Math.max(nextPl.findIndex((t) => t.id === track.id), 0);
         setPlaylist(nextPl);
         playlistRef.current = nextPl;
+        syncToBackend(nextPl);
         setIndex(i);
         indexRef.current = i;
         playTrack(track);
@@ -175,7 +210,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [playTrack]
+    [playTrack, syncToBackend]
   );
 
   const next = useCallback(() => {
@@ -219,6 +254,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     seek(0);
   }, [pause, seek]);
 
+  const clearTrackRemoved = useCallback(() => {
+    setTrackRemoved(false);
+  }, []);
+
   const state: PlayerState = useMemo(
     () => ({
       current,
@@ -245,8 +284,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       stop,
       audioRef,
+      trackRemoved,
+      clearTrackRemoved,
     }),
-    [state, playTrackWrapped, addTracks, removeTrack, next, prev, togglePlayWrapped, seek, setVolume, stop, audioRef]
+    [state, playTrackWrapped, addTracks, removeTrack, next, prev, togglePlayWrapped, seek, setVolume, stop, audioRef, trackRemoved, clearTrackRemoved]
   );
 
   return (
