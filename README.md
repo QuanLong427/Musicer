@@ -6,15 +6,15 @@ AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于
 
 ## Features
 
+- **LangGraph ReAct Agent** — LLM 自主决策工具调用，多轮迭代推理，SSE 流式输出
 - **双模式切换** — 本地曲库搜索 / B站云端搜索，一键切换
-- **AI 对话交互** — 通过自然语言告诉 AI 你想听什么，智能搜索推荐
-- **B站视频转音频** — 云端搜索后自动转换为本地 MP3，构建个人曲库
-- **弹幕叠加** — 播放 B站来源的音频时，同步显示原视频弹幕
-- **复古终端 UI** — 赛博朋克风格界面，实时状态面板
-- **智能文件名解析** — 自动从文件名中提取标题、作者、日期、BV号
-- **分层记忆系统** — 短期（对话）/ 中期（历史 JSONL）/ 长期（用户画像），Dream 引擎自动总结偏好
+- **B站全链路** — 视频搜索（WBI 签名）→ 转 MP3 下载 → 弹幕叠加播放 → 自动入库知识库
+- **分层记忆系统** — 短期（对话）/ 中期（JSONL 历史）/ 长期（用户画像），Dream 引擎自动沉淀
 - **LLM-Wiki 知识库** — 基于 Karpathy llm-wiki 方法论，自动消化入库歌曲为结构化知识库
-- **场景感知推荐** — 根据用户当前场景（编程/跑步/睡觉等）匹配个性化偏好
+- **场景感知推荐** — 自定义场景（编程/跑步/睡觉等），每个场景独立维护偏好
+- **知识库检索子 Agent** — 独立 LangGraph 子图，硬编码检索流程 + 用户画像上下文感知
+- **斜杠命令** — 聊天中输入 `/reset-wiki`、`/help` 等管理命令
+- **复古终端 UI** — 赛博朋克风格，Atomic Design 组件体系，频谱可视化
 
 ## Tech Stack
 
@@ -32,7 +32,7 @@ AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于
 ```
 ┌─────────────────┐     HTTP/SSE      ┌─────────────────────────────────┐
 │   Next.js 前端   │ ◄──────────────► │  FastAPI 后端                    │
-│   localhost:3000 │                   │  localhost:8000                 │
+│   localhost:3002 │                   │  localhost:8000                 │
 └─────────────────┘                   └─────────────────────────────────┘
                                               │
                                     ┌─────────┴─────────┐
@@ -80,17 +80,24 @@ cd musicer
 
 ### 2. 配置环境变量
 
-复制 `.env.example` 为 `.env`，填入你的 API Key：
+前后端配置已分离，各自读取自己目录下的配置文件：
 
 ```env
-# AI Provider 配置（OpenAI 兼容格式）
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_API_KEY=your-api-key-here
-MODEL_NAME=deepseek-chat
+# frontend/.env — 前端配置（Next.js 自动加载）
+BACKEND_URL=http://localhost:8000
+MUSIC_DIR=Documents/bili
 
-# 音频存储目录（可选，默认 ~/Documents/bili）
-MUSIC_DIR=~/Documents/bili
+# backend/.env — 后端配置（Python FastAPI）
+OPENAI_BASE_URL=https://api.deepseek.com
+MODEL_NAME=deepseek-chat
+MUSIC_DIR=Documents/bili
+BACKEND_PORT=8000
+
+# backend/.env.local — 后端私密配置（git 自动忽略）
+OPENAI_API_KEY=your-api-key-here
 ```
+
+> 前后端的 `MUSIC_DIR` 需保持一致，指向同一个音乐目录。
 
 ### 3. 安装依赖
 
@@ -109,7 +116,7 @@ cd ..
 
 需要同时运行前后端两个服务（开两个终端窗口）：
 
-**终端 1 — 后端（端口 8000）：**
+**终端 1 — 后端：**
 
 ```bash
 cd backend
@@ -117,7 +124,7 @@ cd backend
 .venv/Scripts/python.exe -m uvicorn main:app --reload           # Git Bash / macOS / Linux
 ```
 
-**终端 2 — 前端（端口 3000）：**
+**终端 2 — 前端：**
 
 ```bash
 npm run dev
@@ -125,30 +132,38 @@ npm run dev
 
 ### 5. 打开浏览器
 
-访问 http://localhost:3000
+访问 http://localhost:3002
+
+## Port Configuration
+
+| 服务   | 默认端口 | 配置位置                              |
+| ------ | -------- | ------------------------------------- |
+| 前端   | 3002     | `package.json` → `scripts.dev` 中的 `-p` 参数 |
+| 后端   | 8000     | `backend/.env` → `BACKEND_PORT=8000` |
+
+修改前端端口：编辑 `package.json` 中 `dev` 脚本的 `-p` 参数。
+修改后端端口：修改 `backend/.env` 中的 `BACKEND_PORT`，重启后端。
 
 ## Project Structure
 
 ```
 Musicer/
-├── app/                        # Next.js 前端
-│   ├── api/                    # API 路由代理
-│   ├── components/             # UI 组件（Atomic Design）
-│   │   ├── atoms/              # 原子组件
-│   │   ├── molecules/          # 分子组件
-│   │   └── organisms/          # 有机体组件
-│   ├── context/                # React Context 状态管理
-│   ├── hooks/                  # 自定义 Hooks
-│   └── lib/                    # 共享逻辑（API、类型、工具函数）
+├── frontend/                   # Next.js 前端
+│   ├── app/                    # Next.js App Router
+│   │   ├── api/                # API 路由代理（chat, bili, history, scenarios, wiki...）
+│   │   ├── components/         # UI 组件（Atomic Design）
+│   │   │   ├── atoms/          # 原子组件
+│   │   │   ├── molecules/      # 分子组件
+│   │   │   └── organisms/      # 有机体组件
+│   │   ├── context/            # React Context 状态管理
+│   │   ├── hooks/              # 自定义 Hooks
+│   │   └── lib/                # 共享逻辑（API、类型、工具函数）
+│   ├── .env                    # 前端环境变量（BACKEND_URL）
+│   ├── tsconfig.json
+│   ├── next.config.ts
+│   └── package.json
 ├── backend/                    # Python 后端
-│   ├── routers/                # API 路由
-│   │   ├── chat.py             # POST /api/chat（SSE）
-│   │   ├── bili.py             # B站搜索 & 弹幕
-│   │   ├── search.py           # 本地曲库搜索
-│   │   ├── tracks.py           # 音频文件服务
-│   │   ├── dream.py            # Dream 引擎手动触发
-│   │   ├── scenario.py         # 场景管理
-│   │   └── wiki.py             # LLM-Wiki API
+│   ├── routers/                # API 路由（chat, bili, search, tracks, dream, scenario, wiki, history）
 │   ├── services/               # 业务逻辑
 │   │   ├── ai_agent.py         # LangGraph Agent（核心）
 │   │   ├── bili_client.py      # B站 API 客户端（WBI 签名）
@@ -156,22 +171,39 @@ Musicer/
 │   │   ├── memory_manager.py   # 分层记忆管理
 │   │   ├── dream_engine.py     # Dream 引擎（画像总结）
 │   │   ├── scenario_manager.py # 场景管理
+│   │   ├── skill_loader.py     # Agent 技能加载器
 │   │   ├── wiki_ingest.py      # LLM-Wiki 入库
-│   │   ├── wiki_retriever.py   # LLM-Wiki 检索
 │   │   ├── wiki_manager.py     # LLM-Wiki 状态管理
 │   │   └── system_init.py      # 启动初始化
 │   ├── main.py                 # FastAPI 入口
-│   └── config.py               # 配置管理
+│   ├── config.py               # 配置管理
+│   ├── .env                    # 后端配置
+│   └── .env.local              # 后端私密配置（API Key）
+├── skills/                     # Agent 技能（SKILL.md）
+│   ├── cloud-search/           # B站云端搜索
+│   ├── convert/                # 视频转音频
+│   ├── local-search/           # 本地曲库搜索
+│   └── slash-commands/         # 斜杠命令（/reset-wiki, /help）
 ├── memory/                     # 记忆系统
 │   ├── template/               # 模板文件
 │   └── data/                   # 运行时数据（gitignore）
 ├── LLM-Wiki/                   # 知识库（gitignore，运行时生成）
-├── db/                         # 数据库配置
+├── db/                         # 配置数据
 │   └── scenario.yml            # 场景列表
-├── skills/                     # Agent 技能
-├── design/                     # 设计规范
+├── package.json                # npm 工作区配置
 └── docker-compose.yml
 ```
+
+## Slash Commands
+
+在聊天中输入 `/命令名` 执行管理操作：
+
+| 命令          | 说明                          |
+| ------------- | ----------------------------- |
+| `/reset-wiki` | 重置 LLM-Wiki 知识库          |
+| `/help`       | 显示所有可用命令              |
+
+扩展新命令：在 `skills/slash-commands/SKILL.md` 中添加命令说明，在 `backend/services/ai_agent.py` 中添加对应的 `@tool` 函数。
 
 ## API Endpoints
 
@@ -184,8 +216,12 @@ Musicer/
 | GET  | `/api/tracks/scan?subDir=20250430` | 扫描指定日期目录                |
 | GET  | `/api/tracks/{path}`               | 服务音频文件（支持 Range 请求） |
 | POST | `/api/dream/run`                   | 手动触发 Dream 引擎             |
-| GET  | `/api/scenario`                    | 获取场景列表                    |
-| GET  | `/api/wiki/query?q=关键词`         | LLM-Wiki 语义搜索               |
+| GET/POST | `/api/scenarios`                 | 场景列表 / 创建场景             |
+| DELETE | `/api/scenarios/{name}`           | 删除场景                        |
+| GET  | `/api/history`                     | 获取对话历史                    |
+| GET  | `/api/wiki/status`                 | LLM-Wiki 状态                   |
+| POST | `/api/wiki/init`                   | 初始化 LLM-Wiki                 |
+| POST | `/api/wiki/query`                  | LLM-Wiki 检索                   |
 
 ## Usage
 

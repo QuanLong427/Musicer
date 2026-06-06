@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-from services.scenario_manager import add_scenario, read_scenarios
+from services.scenario_manager import add_scenario, read_scenarios, remove_scenario
+from services.memory_manager import remove_profile_scenario
 
 router = APIRouter(tags=["scenario"])
 
@@ -22,4 +23,12 @@ async def create_scenario(req: AddScenarioRequest):
     if not req.name.strip():
         return {"error": "场景名称不能为空"}
     scenarios = add_scenario(req.name.strip())
+    return {"scenarios": scenarios}
+
+
+@router.delete("/api/scenarios/{name}")
+async def delete_scenario(name: str):
+    """删除场景"""
+    scenarios = remove_scenario(name)
+    remove_profile_scenario(name)
     return {"scenarios": scenarios}

@@ -82,6 +82,16 @@ def write_profile(content: str):
     PROFILE_FILE.write_text(content, encoding="utf-8")
 
 
+def remove_profile_scenario(scenario_name: str):
+    """从 user_profile.md 中删除指定场景的 section"""
+    import re
+    content = read_profile()
+    # Match from "## 场景:<name>" to the next "## " or end of file
+    pattern = rf'\n## 场景:{re.escape(scenario_name)}\b.*?(?=\n## |\Z)'
+    new_content = re.sub(pattern, '', content, flags=re.DOTALL)
+    write_profile(new_content)
+
+
 # ── 中期记忆 (History) ──────────────────────────────────────────────────────
 
 

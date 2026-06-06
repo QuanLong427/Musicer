@@ -16,15 +16,50 @@ description: 将 B站视频转为 MP3 音频文件，支持批量转换和自动
 4. **工具内部使用 `npx bv2mp3 --threads 20` 执行转换**
 5. **必须等待 `convert_video` 工具返回结果后，才能执行后续步骤或输出结束语**
 6. **禁止在调用 convert_video 之前或期间输出"转换已启动"、"请稍候"等结束语**
+7. **必须传入 `song_meta_json` 参数，格式见下方，artist 和 title 必须从视频标题中解析出纯净的歌手名和歌名**
+
+**Fallback 规则（工具内部自动处理）：**
+- `artist` 缺失 → 自动使用 `"Unknown"`
+- `title` 缺失 → 自动使用 `videoTitle`（原始视频标题）
+- `bvid` → 始终存在（由 bili_search 保证）
 
 当收到 "请将以下B站视频转为音频" 的指令时，执行以下步骤：
 
-### 1. 执行转换
+### 1. 解析元数据
 
-调用 `convert_video` 工具，传入 URL 列表：
+从 `bili_search` 返回的搜索结果中，为每个视频提取以下字段：
+
+- **`bvid`**：BV 号（必填）
+- **`title`**：纯净歌名（必填，从视频标题中提取，去除UP主名、前缀描述、后缀标签等噪音）
+- **`artist`**：纯净歌手名（必填，从视频标题中提取，不是 UP 主名字）
+- **`uploader`**：UP 主名字（来自 bili_search 的 author 字段）
+- **`videoTitle`**：视频原始标题（来自 bili_search 的 title 字段）
+
+**解析规则：**
+- 视频标题中 `《》` 内的内容为歌名，如 `新裤子《没有理想的人不伤心》` → 歌名 = `没有理想的人不伤心`
+- 歌名前面的部分通常包含歌手名，如 `新裤子《...》` → 歌手 = `新裤子`
+- 去掉前缀描述（如"在百万豪装录音棚大声听"、"4K修复"、"【Hi-Res无损】"等）
+- 去掉后缀标签（如"【Hi-res】"、"- MV"等）
+- UP 主名字（如 "JLRS-LeoFM"）是频道名，不是歌手名
+
+示例：
 ```
-convert_video(urls=["https://www.bilibili.com/video/BV1xxxxx", "https://www.bilibili.com/video/BV2yyyyy"])
+视频标题: "在百万豪装录音棚大声听 新裤子《没有理想的人不伤心》【Hi-res】"
+UP主: "JLRS-LeoFM"
+→ artist: "新裤子", title: "没有理想的人不伤心"
 ```
+
+### 2. 执行转换
+
+调用 `convert_video` 工具，传入 URL 列表和解析后的元数据：
+```
+convert_video(
+  urls=["https://www.bilibili.com/video/BV1xxxxx", "https://www.bilibili.com/video/BV2yyyyy"],
+  song_meta_json='[{"bvid":"BV1xxxxx","title":"没有理想的人不伤心","artist":"新裤子","uploader":"JLRS-LeoFM","videoTitle":"在百万豪装录音棚大声听 新裤子《没有理想的人不伤心》【Hi-res】"},{"bvid":"BV2yyyyy","title":"歌名2","artist":"歌手2","uploader":"UP2","videoTitle":"原始标题2"}]'
+)
+```
+
+`song_meta_json` 格式：JSON 数组字符串，每个元素包含 `bvid`（BV号）、`title`（纯净歌名）、`artist`（纯净歌手名）、`uploader`（UP主名字）、`videoTitle`（视频原始标题）。**title 和 artist 必须为空字符串以外的值**。
 
 ### 2. 扫描曲库
 

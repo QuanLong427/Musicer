@@ -35,7 +35,7 @@ class Settings:
     MUSIC_DIR: str = _resolve_music_dir()
     WIKI_DIR: str = _resolve_wiki_dir()
     HOST: str = os.getenv("HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("PORT", "8000"))
+    PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
     DREAM_INTERVAL_HOURS: int = int(os.getenv("DREAM_INTERVAL_HOURS", "24"))
 
 

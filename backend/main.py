@@ -1,10 +1,10 @@
 from dotenv import load_dotenv
 from pathlib import Path
 
-# 加载项目根目录的 .env 和 .env.local 文件（backend 的父目录）
-_project_root = Path(__file__).resolve().parent.parent
-load_dotenv(_project_root / ".env", override=False)
-load_dotenv(_project_root / ".env.local", override=True)
+# 加载 backend 目录下的 .env 和 .env.local 文件
+_backend_dir = Path(__file__).resolve().parent
+load_dotenv(_backend_dir / ".env", override=False)
+load_dotenv(_backend_dir / ".env.local", override=True)
 
 import asyncio
 import logging

@@ -69,9 +69,9 @@ url: {song_meta.get('url', '')}
 duration: {song_meta.get('duration', 0)}
 ---
 
-# {song_meta.get('title', 'Unknown')}
+# {song_meta.get('title', '')}
 
-- Artist: {song_meta.get('artist', 'Unknown')}
+- Artist: {song_meta.get('artist', '')}
 - Album: {song_meta.get('album', '')}
 - Genre: {song_meta.get('genre', '')}
 - Duration: {song_meta.get('duration', 0)}s
@@ -224,13 +224,13 @@ bvid: {bvid}
 local_file_path: {song_meta.get('local_file_path', '')}
 ---
 
-# {song_meta.get('title', 'Unknown')}
+# {song_meta.get('title', '')}
 
 ## Overview
 {analysis.get('source_summary', 'No summary available.')}
 
 ## Metadata
-- Artist: {song_meta.get('artist', 'Unknown')}
+- Artist: {song_meta.get('artist', '')}
 - Album: {song_meta.get('album', '')}
 - Genre: {song_meta.get('genre', '')}
 - Duration: {song_meta.get('duration', 0)}s
@@ -358,7 +358,7 @@ def _update_index_and_log(song_meta: Dict, source_page: str, entity_pages: List[
         with open(index_path, "r", encoding="utf-8") as f:
             index_content = f.read()
 
-        source_link = f"- [[{os.path.basename(source_page).replace('.md', '')}]] - {song_meta.get('title', 'Unknown')}\n"
+        source_link = f"- [[{os.path.basename(source_page).replace('.md', '')}]] - {song_meta.get('title') or song_meta.get('bvid', '')}\n"
         if source_link not in index_content:
             index_content = index_content.replace("## Sources\n", f"## Sources\n{source_link}")
 
@@ -383,7 +383,7 @@ def _update_index_and_log(song_meta: Dict, source_page: str, entity_pages: List[
         with open(log_path, "r", encoding="utf-8") as f:
             log_content = f.read()
 
-        log_entry = f"| {today} | ingest | {song_meta.get('title', 'Unknown')} ({song_meta.get('bvid', '')}) |\n"
+        log_entry = f"| {today} | ingest | {song_meta.get('title') or song_meta.get('bvid', '')} ({song_meta.get('bvid', '')}) |\n"
         log_content += log_entry
 
         with open(log_path, "w", encoding="utf-8") as f:

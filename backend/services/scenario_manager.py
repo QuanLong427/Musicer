@@ -46,3 +46,12 @@ def add_scenario(name: str) -> List[str]:
         scenarios.append(name)
         write_scenarios(scenarios)
     return scenarios
+
+
+def remove_scenario(name: str) -> List[str]:
+    """删除场景，返回更新后的列表"""
+    scenarios = read_scenarios()
+    if name in scenarios:
+        scenarios.remove(name)
+        write_scenarios(scenarios)
+    return scenarios

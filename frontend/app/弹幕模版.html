@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>科技感气泡弹幕 - 纯净观赏版</title>
+<style>
+    /* 全局背景设置：深色径向渐变，模拟科技界面的深邃感 */
+    body {
+        margin: 0;
+        overflow: hidden;
+        background: radial-gradient(circle at center, #0b192c 0%, #020611 100%);
+        color: #fff;
+        font-family: 'Consolas', 'Courier New', monospace;
+    }
+
+    /* 弹幕容器，占满全屏 */
+    #danmaku-container {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    /* 气泡核心样式 - 基础为纯文字形态 */
+    .bubble {
+        position: absolute;
+        bottom: -100px;
+        padding: 12px 24px;
+        border-radius: 50px;
+        white-space: nowrap;
+        opacity: 0;
+        font-weight: bold;
+        letter-spacing: 1px;
+        
+        /* 接收 JS 传入的随机文字颜色变量 */
+        color: var(--c-text);
+        text-shadow: 0 0 10px var(--c-text), 1px 1px 3px rgba(0,0,0,0.8);
+        
+        /* 默认无边框、无背景 */
+        border: 1px solid transparent;
+        background: transparent;
+        
+        /* 绑定上浮动画 */
+        animation: floatUp linear forwards;
+    }
+
+    /* 带有方框的形态 */
+    .bubble.with-border {
+        /* 毛玻璃与全息发光效果 */
+        background: var(--c-bg);
+        border: 1px solid var(--c-border);
+        box-shadow: 0 0 15px var(--c-glow), inset 0 0 10px var(--c-glow);
+        backdrop-filter: blur(4px);
+    }
+
+    /* 上浮与消散动画 */
+    @keyframes floatUp {
+        0% {
+            transform: translateY(0) scale(0.8);
+            opacity: 0;
+        }
+        10% {
+            opacity: 1; /* 浮出水面时渐显 */
+        }
+        80% {
+            opacity: 1;
+            transform: translateY(-80vh) scale(1.1);
+        }
+        100% {
+            transform: translateY(-120vh) scale(1.3); /* 模拟泡泡越往上体积越大 */
+            opacity: 0; /* 最终消失 */
+        }
+    }
+</style>
+</head>
+<body>
+
+<div id="danmaku-container"></div>
+
+<script>
+    const container = document.getElementById('danmaku-container');
+
+    // 生成随机色相 (Hue: 0-360)
+    function getRandomHue() {
+        return Math.floor(Math.random() * 360);
+    }
+
+    // 核心函数：发射单个气泡弹幕
+    function shootBubble(text) {
+        if (!text.trim()) return;
+
+        // 创建 DOM 元素
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = text;
+
+        // 1. 随机生成【文字颜色】 (高亮度 70% 保证清晰)
+        const textHue = getRandomHue();
+        bubble.style.setProperty('--c-text', `hsl(${textHue}, 100%, 75%)`);
+
+        // 2. 随机决定【是否带有方框】 (设定为 50% 概率)
+        const hasBorder = Math.random() > 0.5;
+        
+        if (hasBorder) {
+            bubble.classList.add('with-border');
+            
+            // 3. 随机生成【方框颜色】 (独立于文字颜色)
+            const borderHue = getRandomHue();
+            
+            // 为不同透明度级别设置变量，供 CSS 阴影和背景使用
+            bubble.style.setProperty('--c-border', `hsla(${borderHue}, 100%, 60%, 0.7)`);
+            bubble.style.setProperty('--c-glow',   `hsla(${borderHue}, 100%, 60%, 0.4)`);
+            bubble.style.setProperty('--c-bg',     `hsla(${borderHue}, 100%, 20%, 0.3)`); 
+        }
+
+        // 4. 随机化位置与上浮参数
+        const leftPos = Math.random() * 80 + 10; // 水平位置 (10% - 90%)
+        const duration = Math.random() * 4 + 5;  // 动画时长 (5s - 9s)，控制上浮速度
+        const delay = Math.random() * 0.5;       // 随机延迟起步
+
+        bubble.style.left = `${leftPos}%`;
+        bubble.style.animationDuration = `${duration}s`;
+        bubble.style.animationDelay = `${delay}s`;
+
+        // 将气泡加入页面
+        container.appendChild(bubble);
+
+        // 垃圾回收：动画播放完毕后移除 DOM 元素
+        bubble.addEventListener('animationend', () => {
+            bubble.remove();
+        });
+    }
+
+    // ==========================================
+    // 模拟环境：后台源源不断接收弹幕的情况
+    // ==========================================
+    const mockData = [
+        "SYSTEM ONLINE", "神经键连接正常", "数据传输进度 99%", 
+        "Warning: 侦测到高能反应", "防火墙已开启", "前端技术太酷了", 
+        "Access Granted", "Cyberpunk 2077", "Neon Lights", "Random Matrix"
+    ];
+
+    // 每秒随机触发弹幕
+    setInterval(() => {
+        // 50%的概率生成后台弹幕，保持视觉丰满度
+        if(Math.random() > 0.5) { 
+            const randomMsg = mockData[Math.floor(Math.random() * mockData.length)];
+            shootBubble(randomMsg);
+        }
+    }, 400);
+</script>
+</body>
+</html>

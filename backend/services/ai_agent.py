@@ -116,11 +116,11 @@ _OUTPUT_FORMAT = """
 
 当向用户推荐歌曲时，先用自然语言简要介绍，然后 **必须** 将曲目放在独立的 tracks 代码块中。格式如下：
 
-本地搜索结果（必须包含 bvid 字段，用于弹幕功能）：
+本地搜索结果（必须包含 filename 和 bvid 字段）：
 ```tracks
 [
-  {"id":"xxx","title":"歌名","author":"歌手","url":"/audio/xxx.mp3","bvid":"BV1xxxxx"},
-  {"id":"yyy","title":"歌名2","author":"歌手2","url":"/audio/yyy.mp3","bvid":"BV2yyyyy"}
+  {"id":"xxx","title":"歌名","author":"歌手","url":"/audio/xxx.mp3","filename":"歌手-歌名-BV1xxxxx.mp3","bvid":"BV1xxxxx"},
+  {"id":"yyy","title":"歌名2","author":"歌手2","url":"/audio/yyy.mp3","filename":"歌手2-歌名2-BV2yyyyy.mp3","bvid":"BV2yyyyy"}
 ]
 ```
 
@@ -135,7 +135,7 @@ _OUTPUT_FORMAT = """
 关键规则：
 1. 代码块标记必须用 ```tracks 开头，``` 结尾，各占独立一行
 2. 数据必须是合法 JSON 数组，**逐字复制** API 返回的 JSON 字段值，**严禁修改、缩短、重写或"美化"任何字段**
-3. 本地结果每个对象必须包含 id、title、author、url、bvid 五个字段（bvid 可能为空字符串）
+3. 本地结果每个对象必须包含 id、title、author、url、filename、bvid 六个字段（bvid 可能为空字符串或 null）
 4. 云端结果每个对象必须包含 bvid、title、author、duration、url 五个字段
 5. 即使只推荐一首歌也要用此格式
 6. 不要把 tracks 代码块放在其他 markdown 代码块内
@@ -172,6 +172,28 @@ def _build_system_prompt() -> str:
 def _trigger_wiki_ingest(urls: list[str], song_meta_json: str, target_dir: str) -> None:
     """Trigger wiki ingest asynchronously after successful conversion."""
     import threading
+    import re
+
+    def _parse_filename_meta(filename: str) -> dict:
+        """Parse artist, title, bvid from filename like '歌手-歌名-BVxxx.mp3'."""
+        base = filename[:-4] if filename.endswith(".mp3") else filename
+        result = {}
+
+        # Extract bvid from end
+        bvid_match = re.search(r"[_ ]?(BV[A-Za-z0-9]+)$", base)
+        if bvid_match:
+            result["bvid"] = bvid_match.group(1)
+            base = base[: -len(bvid_match.group(0))]
+
+        # Split by dash: expect artist-title or title
+        parts = base.split("-")
+        if len(parts) >= 2:
+            result["artist"] = parts[0].strip()
+            result["title"] = "-".join(parts[1:]).strip()
+        elif len(parts) == 1:
+            result["title"] = parts[0].strip()
+
+        return result
 
     def _run():
         try:
@@ -180,8 +202,9 @@ def _trigger_wiki_ingest(urls: list[str], song_meta_json: str, target_dir: str) 
 
             status = get_wiki_status()
             if not status.get("initialized"):
-                logger.info("[wiki] Wiki not initialized, skipping ingest")
-                return
+                logger.info("[wiki] Wiki not initialized, auto-initializing")
+                from services.wiki_manager import init_wiki
+                init_wiki()
 
             # Parse song metadata if provided
             meta_list = []
@@ -208,16 +231,30 @@ def _trigger_wiki_ingest(urls: list[str], song_meta_json: str, target_dir: str) 
                         break
 
                 if not song_meta:
-                    song_meta = {"bvid": bvid, "url": url, "title": bvid}
+                    song_meta = {"bvid": bvid, "url": url, "title": ""}
 
-                # Try to find the local file
+                # Apply fallback: artist→"Unknown", title→videoTitle
+                if not song_meta.get("artist"):
+                    song_meta["artist"] = "Unknown"
+                if not song_meta.get("title"):
+                    video_title = song_meta.get("videoTitle", "") or song_meta.get("video_title", "")
+                    song_meta["title"] = video_title or "Unknown"
+
+                # Try to find the local file and parse metadata from filename
                 if target_dir and os.path.isdir(target_dir):
                     for f in os.listdir(target_dir):
                         if bvid and bvid in f and f.endswith(".mp3"):
                             song_meta["local_file_path"] = os.path.join(target_dir, f)
+                            # Fallback: parse title/artist from filename
+                            if not song_meta.get("title") or not song_meta.get("artist"):
+                                filename_meta = _parse_filename_meta(f)
+                                if not song_meta.get("title"):
+                                    song_meta["title"] = filename_meta.get("title", "")
+                                if not song_meta.get("artist"):
+                                    song_meta["artist"] = filename_meta.get("artist", "")
                             break
 
-                song_meta.setdefault("title", bvid or "Unknown")
+                song_meta.setdefault("title", bvid or "")
                 song_meta.setdefault("artist", "")
                 song_meta.setdefault("bvid", bvid)
 
@@ -309,14 +346,50 @@ def _build_tools() -> list:
 
     @tool
     def convert_video(urls: list[str], song_meta_json: str = "") -> str:
-        """Download and convert Bilibili videos to MP3. Takes a list of bilibili video URLs. Optionally pass song metadata JSON for wiki ingest."""
-        today = __import__("datetime").datetime.now().strftime("%Y%m%d")
+        """Download and convert Bilibili videos to MP3.
+
+        Args:
+            urls: List of Bilibili video URLs (e.g., ["https://www.bilibili.com/video/BV1xxxxx"]).
+            song_meta_json: Required JSON array string with metadata for each URL. Each element must contain:
+                - bvid (str): BV号, required
+                - title (str): 纯净歌名, required (从视频标题中解析, 去除UP主名/前缀/后缀)
+                - artist (str): 纯净歌手名, required (从视频标题中解析, 不是UP主名字)
+                - uploader (str): UP主名字, optional
+                - videoTitle (str): 视频原始标题, optional
+                Example: '[{"bvid":"BV1xxxxx","title":"没有理想的人不伤心","artist":"新裤子","uploader":"JLRS-LeoFM","videoTitle":"在百万豪装录音棚大声听 新裤子《没有理想的人不伤心》【Hi-res】"}]'
+
+        Returns:
+            JSON string with: {"success": bool, "files": [{"original", "renamed", "bvid"}], "errors": []}.
+        """
+        from datetime import datetime
+
+        today = datetime.now().strftime("%Y%m%d")
         target_dir = os.path.join(settings.MUSIC_DIR, today)
 
         if not os.path.isdir(settings.MUSIC_DIR):
-            return f"[error] MUSIC_DIR does not exist: {settings.MUSIC_DIR}. Check .env configuration."
+            return json.dumps({"success": False, "error": f"MUSIC_DIR does not exist: {settings.MUSIC_DIR}", "files": [], "errors": []})
 
         os.makedirs(target_dir, exist_ok=True)
+
+        # Parse song metadata
+        meta_list = []
+        if song_meta_json:
+            try:
+                meta_list = json.loads(song_meta_json)
+                if not isinstance(meta_list, list):
+                    meta_list = [meta_list]
+            except json.JSONDecodeError:
+                pass
+
+        # Build bvid -> meta mapping
+        meta_by_bvid = {}
+        for m in meta_list:
+            bvid = m.get("bvid", "")
+            if bvid:
+                meta_by_bvid[bvid] = m
+
+        # Get list of existing files before conversion
+        existing_files = set(os.listdir(target_dir)) if os.path.isdir(target_dir) else set()
 
         url_args = " ".join(f"-u {u}" for u in urls)
         unix_dir = _to_unix_path(target_dir)
@@ -324,12 +397,8 @@ def _build_tools() -> list:
 
         bash_exe = _find_bash() if IS_WINDOWS else "/bin/bash"
         print(f"[convert_video] target_dir={target_dir}")
-        print(f"[convert_video] unix_dir={unix_dir}")
-        print(f"[convert_video] bash_exe={bash_exe}")
         print(f"[convert_video] command={command}")
-        print(f"[convert_video] cwd={os.getcwd()}")
-        print(f"[convert_video] dir_exists={os.path.isdir(target_dir)}")
-        print(f"[convert_video] dir_writable={os.access(target_dir, os.W_OK)}")
+
         try:
             result = subprocess.run(
                 [bash_exe, "--login", "-c", command],
@@ -337,37 +406,71 @@ def _build_tools() -> list:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=600,
+                timeout=120,
             )
-            parts = []
-            if result.stdout.strip():
-                parts.append(result.stdout.strip())
-            if result.stderr.strip():
-                parts.append(f"[stderr] {result.stderr.strip()}")
-            if result.returncode != 0:
-                parts.append(f"[exit code] {result.returncode}")
 
-            # Clean up .flv files after conversion
-            flv_count = 0
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+                return json.dumps({"success": False, "error": error_msg, "files": [], "errors": [error_msg]})
+
+            # Clean up .flv files
             for f in os.listdir(target_dir):
                 if f.endswith(".flv"):
                     try:
                         os.remove(os.path.join(target_dir, f))
-                        flv_count += 1
                     except OSError:
                         pass
-            if flv_count:
-                parts.append(f"[cleanup] Deleted {flv_count} .flv file(s)")
 
-            # Trigger wiki ingest asynchronously for each URL
-            if result.returncode == 0:
-                _trigger_wiki_ingest(urls, song_meta_json, target_dir)
+            # Find new .mp3 files and rename them
+            current_files = set(os.listdir(target_dir))
+            new_files = current_files - existing_files
+            converted_files = []
 
-            return "\n".join(parts) if parts else "(no output)"
+            for f in new_files:
+                if not f.endswith(".mp3"):
+                    continue
+
+                original_path = os.path.join(target_dir, f)
+                # Try to extract bvid from filename (bv2mp3 may include it)
+                bvid = ""
+                for url in urls:
+                    if "bilibili.com/video/" in url:
+                        bvid = url.split("bilibili.com/video/")[-1].split("?")[0]
+                        break
+                if not bvid:
+                    import re
+                    bvid_match = re.search(r"(BV[A-Za-z0-9]+)", f)
+                    if bvid_match:
+                        bvid = bvid_match.group(1)
+
+                # Find matching metadata
+                meta = meta_by_bvid.get(bvid, {})
+                artist = meta.get("artist", "").strip() or "Unknown"
+                title = meta.get("title", "").strip()
+                video_title = meta.get("videoTitle", "") or meta.get("video_title", "")
+                if not title:
+                    title = video_title or "Unknown"
+
+                if bvid:
+                    new_name = f"{artist}-{title}-{bvid}.mp3"
+                    new_path = os.path.join(target_dir, new_name)
+                    try:
+                        os.rename(original_path, new_path)
+                        converted_files.append({"original": f, "renamed": new_name, "bvid": bvid})
+                    except OSError:
+                        converted_files.append({"original": f, "renamed": f, "bvid": bvid})
+                else:
+                    converted_files.append({"original": f, "renamed": f, "bvid": bvid or None})
+
+            # Trigger wiki ingest
+            _trigger_wiki_ingest(urls, song_meta_json, target_dir)
+
+            return json.dumps({"success": True, "files": converted_files, "errors": []}, ensure_ascii=False)
+
         except subprocess.TimeoutExpired:
-            return "[error] Command timed out after 600 seconds"
+            return json.dumps({"success": False, "error": "timeout", "files": [], "errors": ["Command timed out after 120 seconds"]})
         except Exception as e:
-            return f"[error] {e}"
+            return json.dumps({"success": False, "error": str(e), "files": [], "errors": [str(e)]})
 
     @tool
     def read_file(path: str) -> str:
@@ -396,7 +499,23 @@ def _build_tools() -> list:
         last_msg = result["messages"][-1]
         return last_msg.content if hasattr(last_msg, "content") else str(last_msg)
 
-    return [bash, bili_search, local_search, convert_video, read_file, wiki_search]
+    @tool
+    def reset_wiki() -> str:
+        """Reset the LLM-Wiki knowledge base. Deletes all data and re-initializes a fresh wiki structure. Use when the user sends /reset-wiki."""
+        import shutil
+        from config import PROJECT_ROOT
+        wiki_dir = os.path.join(PROJECT_ROOT, "LLM-Wiki")
+        try:
+            if os.path.exists(wiki_dir):
+                shutil.rmtree(wiki_dir)
+                logger.info("[wiki] Deleted LLM-Wiki directory")
+            from services.wiki_manager import init_wiki
+            init_wiki()
+            return "LLM-Wiki 已重置并重新初始化完成"
+        except Exception as e:
+            return f"[error] 重置失败: {e}"
+
+    return [bash, bili_search, local_search, convert_video, read_file, wiki_search, reset_wiki]
 
 
 # ── Wiki Sub-Agent ──────────────────────────────────────────────────────────
