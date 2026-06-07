@@ -79,9 +79,10 @@ export function DanmakuProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     console.log("[Danmaku] bvid changed:", bvid, "trackRemoved:", trackRemoved);
     if (trackRemoved) {
-      // Track was deleted — don't switch danmaku, just clear flag
+      // Track was deleted — load new track's danmaku from cache (or empty)
       clearTrackRemoved();
       prevBvidRef.current = bvid;
+      setActiveDanmaku(bvid ? danmakuMapRef.current[bvid] ?? [] : []);
       return;
     }
     // Normal bvid change — fetch and switch to new track's danmaku

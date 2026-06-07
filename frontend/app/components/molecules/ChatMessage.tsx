@@ -216,6 +216,7 @@ function TrackCards({ tracks }: { tracks: TrackExt[] }) {
     if (track.filename) {
       // Local track — add directly
       addTracks([track]);
+      if (track.bvid) fetchDanmaku(track.bvid);
       playTrack(track);
     } else if (track.bvid) {
       // Cloud track — need conversion

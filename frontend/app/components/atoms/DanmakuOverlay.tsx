@@ -20,6 +20,8 @@ type ActiveDanmaku = DanmakuItem & {
   hasBorder: boolean;
   borderHue: number;
   keyframes: string;
+  scaleFactor: number;
+  displayContent: string;
 };
 
 let spawnIdCounter = 0;
@@ -44,11 +46,13 @@ function generateDriftKeyframes(
   boundaryLeft: number,
   boundaryRight: number,
   spawnId: number,
+  scaleFactor: number = 1,
 ): string {
   const frames: string[] = [];
   let x = initialX;
   const dir = driftSpeed >= 0 ? 1 : -1;
   const absSpeed = Math.abs(driftSpeed);
+  const scaleStr = scaleFactor < 1 ? ` scale(${scaleFactor.toFixed(3)})` : "";
 
   for (let i = 0; i <= DRIFT_STEPS; i++) {
     const pct = (i / DRIFT_STEPS) * 100;
@@ -62,7 +66,7 @@ function generateDriftKeyframes(
     const clampedX = Math.max(boundaryLeft, Math.min(boundaryRight, x));
 
     frames.push(
-      `${pct.toFixed(1)}% { transform: translateX(${clampedX.toFixed(1)}px) translateY(${yVh.toFixed(1)}vh); opacity: ${opacity}; }`,
+      `${pct.toFixed(1)}% { transform: translateX(${clampedX.toFixed(1)}px) translateY(${yVh.toFixed(1)}vh)${scaleStr}; opacity: ${opacity}; }`,
     );
 
     if (i < DRIFT_STEPS) {
@@ -119,35 +123,52 @@ export function DanmakuOverlay() {
       if (!el) continue;
 
       // Measure actual rendered width (includes px-5 padding)
-      const textW = el.getBoundingClientRect().width;
+      let textW = el.getBoundingClientRect().width;
+      let displayContent = d.content;
+      let scaleFactor = 1;
 
-      // Center-based positioning: center ∈ [textW/2, containerWidth - textW/2]
-      const halfW = textW / 2;
+      // Handle long danmaku: graded scale or truncate
+      const ratio = textW / w;
+      if (ratio > 3) {
+        // Truncate: show first N chars + "..."
+        const charW = textW / d.content.length;
+        const maxChars = Math.floor((w * 2.5) / charW);
+        displayContent = d.content.slice(0, maxChars) + "...";
+        // Re-measure with truncated content
+        el.textContent = displayContent;
+        textW = el.getBoundingClientRect().width;
+        scaleFactor = 1;
+      } else if (ratio > 2.5) {
+        scaleFactor = 0.55;
+      } else if (ratio > 2) {
+        scaleFactor = 0.65;
+      } else if (ratio > 1.5) {
+        scaleFactor = 0.75;
+      } else if (ratio > 1) {
+        scaleFactor = 0.85;
+      }
+
+      // Use effective visual width for positioning
+      const effectiveW = textW * scaleFactor;
+      const halfW = effectiveW / 2;
       const minCenter = halfW;
       const maxCenter = w - halfW;
       const center = minCenter + seededRandom(d.spawnId + 100) * Math.max(maxCenter - minCenter, 1);
 
-      // leftEdge = center - textW/2
+      // leftEdge = center - effectiveW/2
       const leftEdge = center - halfW;
 
-      // Boundaries for drift: 弹幕左边缘 ∈ [0, containerWidth - textW - SAFETY]
+      // Boundaries for drift
       const SAFETY = 20;
       const bL = SAFETY;
-      const bR = w - textW - SAFETY;
-
-      const keyframes = generateDriftKeyframes(
-        leftEdge,
-        d.borderHue, // using as temp — will be overwritten
-        d.duration,
-        bL,
-        bR,
-        d.spawnId,
-      );
+      const bR = w - effectiveW - SAFETY;
 
       toActivate.push({
         ...d,
         status: "active",
         textW,
+        displayContent,
+        scaleFactor,
         initialX: leftEdge,
         keyframes: generateDriftKeyframes(
           leftEdge,
@@ -156,6 +177,7 @@ export function DanmakuOverlay() {
           bL,
           bR,
           d.spawnId,
+          scaleFactor,
         ),
       });
     }
@@ -191,6 +213,8 @@ export function DanmakuOverlay() {
         hasBorder,
         borderHue,
         keyframes: "",
+        scaleFactor: 1,
+        displayContent: item.content,
       },
     ]);
     setTimeout(() => {
@@ -255,6 +279,7 @@ export function DanmakuOverlay() {
                 ? `dm-drift-${d.spawnId} ${d.duration}s linear ${d.delay}s forwards`
                 : undefined,
             opacity: 0,
+            transformOrigin: "left center",
             color: d.color || "var(--color-on-surface)",
             textShadow:
               "0 0 6px var(--color-primary), 1px 1px 3px rgba(0,0,0,0.8)",
@@ -268,7 +293,7 @@ export function DanmakuOverlay() {
               : {}),
           }}
         >
-          {d.content}
+          {d.displayContent}
         </span>
       ))}
     </div>

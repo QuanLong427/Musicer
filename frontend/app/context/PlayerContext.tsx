@@ -138,46 +138,49 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const removeTrack = useCallback(
     (trackId: string) => {
-      setPlaylist((prev) => {
-        const rmIdx = prev.findIndex((t) => t.id === trackId);
-        if (rmIdx < 0) return prev;
-        const next = [...prev];
-        next.splice(rmIdx, 1);
-        playlistRef.current = next;
-        syncToBackend(next);
+      const curIdx = indexRef.current;
+      let newIndex = curIdx;
+      let shouldPlayNext = false;
+      let nextTrack: Track | undefined;
 
-        const curIdx = indexRef.current;
+      const nextPlaylist = playlistRef.current.filter((t) => t.id !== trackId);
+      if (nextPlaylist.length === playlistRef.current.length) return; // track not found
 
-        if (rmIdx === curIdx) {
-          // removing the currently playing track
-          setTrackRemoved(true);
-          if (next.length === 0) {
-            setIndex(-1);
-            indexRef.current = -1;
-            shouldPauseRef.current = true;
-          } else if (!playing) {
-            // paused — just move index, don't auto-play
-            const newIdx = Math.min(rmIdx, next.length - 1);
-            setIndex(newIdx);
-            indexRef.current = newIdx;
-            shouldPauseRef.current = true;
-          } else {
-            const newIdx = Math.min(rmIdx, next.length - 1);
-            setIndex(newIdx);
-            indexRef.current = newIdx;
-            const t = next[newIdx];
-            if (t) playTrack(t);
+      const rmIdx = playlistRef.current.findIndex((t) => t.id === trackId);
+      playlistRef.current = nextPlaylist;
+      syncToBackend(nextPlaylist);
+
+      if (rmIdx === curIdx) {
+        // removing the currently playing track
+        setTrackRemoved(true);
+        if (nextPlaylist.length === 0) {
+          newIndex = -1;
+          // Directly reset audio element
+          const el = audioRef.current;
+          if (el) {
+            el.pause();
+            el.removeAttribute("src");
+            el.load();
           }
-        } else if (rmIdx < curIdx) {
-          // removed a track before current — shift index back
-          const newIdx = curIdx - 1;
-          setIndex(newIdx);
-          indexRef.current = newIdx;
+        } else if (!playing) {
+          // paused — just move index, don't auto-play
+          newIndex = Math.min(rmIdx, nextPlaylist.length - 1);
+          shouldPauseRef.current = true;
+        } else {
+          newIndex = Math.min(rmIdx, nextPlaylist.length - 1);
+          shouldPlayNext = true;
+          nextTrack = nextPlaylist[newIndex];
         }
-        // rmIdx > curIdx: index unchanged
+      } else if (rmIdx < curIdx) {
+        // removed a track before current — shift index back
+        newIndex = curIdx - 1;
+      }
+      // rmIdx > curIdx: index unchanged
 
-        return next;
-      });
+      indexRef.current = newIndex;
+      setPlaylist(nextPlaylist);
+      setIndex(newIndex);
+      if (shouldPlayNext && nextTrack) playTrack(nextTrack);
     },
     [playTrack, playing, syncToBackend]
   );
@@ -237,6 +240,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [playTrack]);
 
   const togglePlayWrapped = useCallback(() => {
+    if (!playlistRef.current.length) return;
     if (indexRef.current < 0 || !playlistRef.current[indexRef.current]) {
       const first = playlistRef.current[0];
       if (first) {
