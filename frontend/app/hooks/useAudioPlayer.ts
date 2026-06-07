@@ -21,8 +21,13 @@ export function useAudioPlayer(options?: { onEnded?: () => void }) {
     if (!el) return;
 
     const syncDuration = () => setDuration(Number.isFinite(el.duration) ? el.duration : 0);
-    const syncProgress = () =>
+    let lastProgressUpdate = 0;
+    const syncProgress = () => {
+      const now = performance.now();
+      if (now - lastProgressUpdate < 1000) return; // throttle to once per second
+      lastProgressUpdate = now;
       setProgress(Number.isFinite(el.currentTime) ? el.currentTime : 0);
+    };
     const syncPlayFlags = () => setPlaying(true);
     const syncPauseFlags = () => setPlaying(false);
     const syncEnded = () => {

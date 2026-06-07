@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import bili, chat, dream, history, playlist, scenario, search, tracks, wiki
+from routers import bili, chat, config, dream, history, playlist, scenario, search, tracks, wiki
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ app.add_middleware(
 
 app.include_router(bili.router)
 app.include_router(chat.router)
+app.include_router(config.router)
 app.include_router(dream.router)
 app.include_router(history.router)
 app.include_router(playlist.router)

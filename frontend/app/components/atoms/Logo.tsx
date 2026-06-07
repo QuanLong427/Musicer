@@ -1,11 +1,27 @@
-export function Logo({ className }: { className?: string }) {
+"use client";
+
+export function Logo({
+  className,
+  onClick,
+}: {
+  className?: string;
+  onClick?: () => void;
+}) {
   return (
-    <div className={["flex items-center gap-2", className].filter(Boolean).join(" ")}>
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <circle cx="12" cy="12" r="10" stroke="var(--color-primary)" strokeWidth="1.5" opacity="0.6" />
-        <circle cx="12" cy="12" r="5" fill="var(--color-primary)" opacity="0.3" />
-        <circle cx="12" cy="12" r="2.5" fill="var(--color-primary)" />
-      </svg>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={["flex items-center gap-2 cursor-pointer transition-opacity hover:opacity-80", className]
+        .filter(Boolean)
+        .join(" ")}
+      aria-label="Settings"
+    >
+      <span
+        className="material-symbols-outlined"
+        style={{ fontSize: "22px", color: "var(--color-primary)" }}
+      >
+        settings
+      </span>
+    </button>
   );
 }

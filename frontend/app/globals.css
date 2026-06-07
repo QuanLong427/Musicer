@@ -102,11 +102,6 @@
   50% { opacity: 1; transform: scale(1.1); }
 }
 
-@keyframes gradient-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-}
-
 @keyframes orbit {
   from { transform: rotateY(0deg) translateZ(var(--orbit-radius)) rotateY(0deg); }
   to   { transform: rotateY(360deg) translateZ(var(--orbit-radius)) rotateY(-360deg); }
@@ -166,30 +161,6 @@ label {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border-strong);
-}
-
-/* ─── Sci-fi background ─── */
-.aurora-bg {
-  background:
-    radial-gradient(ellipse 80% 50% at 25% 35%, rgba(91, 108, 240, 0.1), transparent),
-    radial-gradient(ellipse 60% 40% at 75% 25%, rgba(176, 160, 240, 0.08), transparent),
-    radial-gradient(ellipse 50% 30% at 55% 75%, rgba(48, 217, 160, 0.04), transparent),
-    linear-gradient(180deg, #06060f 0%, #0a0a1a 50%, #06060f 100%);
-  background-size: 200% 200%;
-  animation: gradient-shift 20s ease infinite;
-}
-
-/* Subtle grid overlay */
-.aurora-bg::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(124, 140, 248, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(124, 140, 248, 0.02) 1px, transparent 1px);
-  background-size: 60px 60px;
-  pointer-events: none;
-  z-index: 0;
 }
 
 /* ─── Scrollbars ─── */

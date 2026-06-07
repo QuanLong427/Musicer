@@ -1,17 +1,24 @@
+"use client";
+
+import { useState } from "react";
 import { DanmakuOverlay, Logo, ModeSwitch } from "@/app/components/atoms";
 import {
   AgentChat,
   ClockPanel,
+  MusicVisualizer,
   Player,
   Playlist,
+  SettingsModal,
   StatusBar,
 } from "@/app/components/organisms";
 
 export default function Home() {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   return (
-    <div className="aurora-bg flex min-h-[100dvh] items-center justify-center p-3 md:p-6 lg:p-8">
-      <div
-        className="flex h-[min(94dvh,56rem)] w-full max-w-7xl flex-col overflow-hidden rounded-xl border shadow-lg"
+    <div className="flex min-h-[100dvh] items-center justify-center p-3 md:p-6 lg:p-8">
+      <MusicVisualizer />
+      <div className="relative z-10 flex h-[min(94dvh,56rem)] w-full max-w-7xl flex-col overflow-hidden rounded-xl border shadow-lg"
         style={{
           borderColor: "var(--glass-border)",
           backgroundColor: "rgba(255, 255, 255, 0.04)",
@@ -26,7 +33,7 @@ export default function Home() {
             backgroundColor: "rgba(255, 255, 255, 0.03)",
           }}
         >
-          <Logo />
+          <Logo onClick={() => setSettingsOpen(true)} />
           <nav aria-label="Main" className="flex flex-wrap items-center gap-4 md:gap-6">
             <ModeSwitch />
           </nav>
@@ -47,6 +54,8 @@ export default function Home() {
 
         <StatusBar />
       </div>
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

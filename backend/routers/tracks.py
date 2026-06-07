@@ -6,10 +6,18 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 
-from services.music_manager import resolve_music_path, scan_subdir
+from services.music_manager import find_track_by_bvid, resolve_music_path, scan_subdir
 from config import settings
 
 router = APIRouter(tags=["tracks"])
+
+
+@router.get("/api/tracks/by-bvid")
+async def get_track_by_bvid(bvid: str = Query(..., min_length=1)):
+    track = find_track_by_bvid(bvid)
+    if not track:
+        raise HTTPException(status_code=404, detail="not found")
+    return track
 
 
 @router.get("/api/tracks/scan")

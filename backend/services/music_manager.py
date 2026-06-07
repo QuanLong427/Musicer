@@ -17,9 +17,9 @@ def _is_num(s: str) -> bool:
 
 def parse_name(name: str) -> dict[str, str | None]:
     bvid = ""
-    bvid_match = re.search(r"[_ ]BV([A-Za-z0-9]+)$", name)
+    bvid_match = re.search(r"[_ ]?(BV[A-Za-z0-9]+)$", name)
     if bvid_match:
-        bvid = f"BV{bvid_match.group(1)}"
+        bvid = bvid_match.group(1)
         name = name[: -len(bvid_match.group(0))]
 
     parts = name.split("-")
@@ -91,6 +91,14 @@ def scan_tracks() -> list[Track]:
             tracks.append(track)
 
     return tracks
+
+
+def find_track_by_bvid(bvid: str) -> Track | None:
+    """Find a local track by its BV id."""
+    for track in scan_tracks():
+        if track.bvid == bvid:
+            return track
+    return None
 
 
 def search_tracks(query: str, limit: int = 20) -> list[Track]:

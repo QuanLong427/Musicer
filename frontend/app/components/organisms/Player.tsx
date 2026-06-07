@@ -28,9 +28,7 @@ export function Player() {
       className="flex flex-col gap-5 rounded-xl border p-4 md:p-5 transition-all duration-200"
       style={{
         borderColor: "var(--glass-border)",
-        backgroundColor: "rgba(255, 255, 255, 0.04)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
+        backgroundColor: "rgba(255, 255, 255, 0.06)",
       }}
     >
       <TrackInfo track={state.current} playing={state.playing} />

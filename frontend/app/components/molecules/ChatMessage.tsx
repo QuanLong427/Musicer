@@ -7,13 +7,14 @@ import type { ChatMessage as ChatMessageModel } from "@/app/lib/types";
 import { usePlayer } from "@/app/context/PlayerContext";
 import { useAgent, type ConvertTrack } from "@/app/context/AgentContext";
 import { useDanmaku } from "@/app/context/DanmakuContext";
+import { apiUrl } from "@/app/lib/api";
+import { useMemo } from "react";
 
 type Props = { message: ChatMessageModel };
 
 type ContentPart =
   | { type: "text"; text: string }
-  | { type: "tracks"; tracks: Track[] }
-  | { type: "added"; tracks: Track[] };
+  | { type: "tracks"; tracks: Track[] };
 
 const FENCED_RE = /```(?:tracks|json|added)?\s*\n([\s\S]*?)```/g;
 
@@ -69,11 +70,6 @@ function tryExtractTracksFromRaw(raw: string): Track[] | null {
   return tracks.length > 0 ? tracks : null;
 }
 
-function detectTag(matchStr: string): "tracks" | "added" {
-  if (matchStr.startsWith("```added")) return "added";
-  return "tracks";
-}
-
 function parseContent(content: string): ContentPart[] {
   const parts: ContentPart[] = [];
   let last = 0;
@@ -86,8 +82,7 @@ function parseContent(content: string): ContentPart[] {
       parts.push({ type: "text", text: content.slice(last, match.index) });
     }
     if (tracks) {
-      const tag = detectTag(match[0]);
-      parts.push({ type: tag, tracks });
+      parts.push({ type: "tracks", tracks });
     } else {
       parts.push({ type: "text", text: match[1] });
     }
@@ -115,72 +110,6 @@ function parseContent(content: string): ContentPart[] {
 
 type TrackExt = Track & { bvid?: string; duration?: string };
 
-function AddedCards({ tracks }: { tracks: TrackExt[] }) {
-  const { state, addTracks } = usePlayer();
-  const { queueConvert, convertingSet } = useAgent();
-  const { fetchDanmaku } = useDanmaku();
-  const inPlaylist = new Set(state.playlist.map((t) => t.id));
-
-  const isCloud = tracks.some((t) => !t.filename);
-
-  const handleAdd = (track: TrackExt) => {
-    if (track.filename) {
-      addTracks([track]);
-    } else if (track.bvid) {
-      queueConvert([{ bvid: track.bvid, title: track.title, author: track.author }]);
-      fetchDanmaku(track.bvid);
-    }
-  };
-
-  return (
-    <div
-      className="my-2 overflow-hidden rounded-xl border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)]"
-    >
-      <div className="px-3 py-2 border-b border-[var(--glass-border)]">
-        <span
-          className="text-[11px] font-medium uppercase tracking-wider"
-          style={{ color: "var(--color-cta)" }}
-        >
-          [{tracks.length} TRACKS ADDED]
-        </span>
-      </div>
-      <div className="max-h-[16rem] overflow-y-auto">
-        {tracks.map((t, i) => {
-          const btnState = getButtonState(t, inPlaylist, convertingSet);
-          const cfg = BTN_CONFIG[btnState];
-          return (
-            <div
-              key={t.id || i}
-              className="flex items-center gap-2 border-b border-[var(--glass-border)] last:border-b-0 px-3 py-2"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="m-0 truncate text-sm" style={{ color: "var(--color-on-surface)" }}>
-                  {t.title}
-                </p>
-                <p className="m-0 truncate text-xs text-[color:var(--color-on-surface-muted)]">
-                  {t.author}
-                  {t.duration && <span className="ml-2 opacity-70">{t.duration}</span>}
-                </p>
-              </div>
-              <button
-                onClick={() => handleAdd(t)}
-                disabled={cfg.disabled}
-                className="shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-all duration-200 disabled:opacity-40 hover:bg-[rgba(129,140,248,0.15)]"
-                style={{
-                  borderColor: cfg.disabled ? "var(--glass-border)" : "rgba(129,140,248,0.3)",
-                  color: cfg.disabled ? "var(--color-on-surface-muted)" : "var(--color-primary)",
-                }}
-              >
-                {cfg.label}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 type ButtonState = "add" | "adding" | "added";
 
 function getButtonState(
@@ -203,23 +132,50 @@ function TrackCards({ tracks }: { tracks: TrackExt[] }) {
   const { state, addTracks, playTrack } = usePlayer();
   const { queueConvert, convertingSet } = useAgent();
   const { fetchDanmaku } = useDanmaku();
-  const inPlaylist = new Set(state.playlist.map((t) => t.id));
+  const inPlaylist = new Set([
+    ...state.playlist.map((t) => t.id),
+    ...state.playlist.map((t) => t.bvid).filter(Boolean),
+  ]);
 
-  const isCloud = tracks.some((t) => !t.filename);
+  // Deduplicate by bvid to avoid duplicate React keys
+  const uniqueTracks = useMemo(() => {
+    const seen = new Set<string>();
+    return tracks.filter((t) => {
+      const key = t.bvid || t.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [tracks]);
 
-  const allDone = tracks.every((t) => {
+  const isCloud = uniqueTracks.some((t) => !t.filename);
+
+  const allDone = uniqueTracks.every((t) => {
     const s = getButtonState(t, inPlaylist, convertingSet);
     return s === "added";
   });
 
-  const handleAdd = (track: TrackExt) => {
+  const handleAdd = async (track: TrackExt) => {
     if (track.filename) {
       // Local track — add directly
       addTracks([track]);
       if (track.bvid) fetchDanmaku(track.bvid);
       playTrack(track);
     } else if (track.bvid) {
-      // Cloud track — need conversion
+      // Cloud track — check if local file exists first
+      try {
+        const res = await fetch(apiUrl(`/api/tracks/by-bvid?bvid=${encodeURIComponent(track.bvid)}`));
+        if (res.ok) {
+          const localTrack: Track = await res.json();
+          addTracks([localTrack]);
+          fetchDanmaku(track.bvid);
+          playTrack(localTrack);
+          return;
+        }
+      } catch {
+        // ignore fetch error, fall through to conversion
+      }
+      // No local file — need conversion
       queueConvert([{ bvid: track.bvid, title: track.title, author: track.author }]);
       fetchDanmaku(track.bvid);
     }
@@ -245,7 +201,7 @@ function TrackCards({ tracks }: { tracks: TrackExt[] }) {
     >
       <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--glass-border)]">
         <span className="text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-on-surface-muted)]">
-          [{tracks.length} TRACKS]
+          [{uniqueTracks.length} TRACKS]
         </span>
         <button
           onClick={handleAddAll}
@@ -257,7 +213,7 @@ function TrackCards({ tracks }: { tracks: TrackExt[] }) {
         </button>
       </div>
       <div className="max-h-[16rem] overflow-y-auto">
-        {tracks.map((t) => {
+        {uniqueTracks.map((t) => {
           const btnState = getButtonState(t, inPlaylist, convertingSet);
           const cfg = BTN_CONFIG[btnState];
           return (
@@ -409,7 +365,6 @@ export function ChatMessage({ message: m }: Props) {
         {parts ? (
           <div className={isOp ? "text-right" : "text-left"}>
             {parts.map((part, i) => {
-              if (part.type === "added") return <AddedCards key={i} tracks={part.tracks} />;
               if (part.type === "tracks") return <TrackCards key={i} tracks={part.tracks} />;
               return (
                 <pre

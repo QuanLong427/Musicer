@@ -117,7 +117,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const addTracks = useCallback((tracks: Track[]) => {
     setPlaylist((prev) => {
       const ids = new Set(prev.map((t) => t.id));
-      const fresh = tracks.filter((t) => !ids.has(t.id));
+      const bvids = new Set(prev.map((t) => t.bvid).filter(Boolean));
+      const fresh = tracks.filter((t) => !ids.has(t.id) && !(t.bvid && bvids.has(t.bvid)));
       if (!fresh.length) return prev;
       const next = [...prev, ...fresh];
       playlistRef.current = next;

@@ -1,14 +1,23 @@
-[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node.js-%3E%3D20-green)](https://nodejs.org/)
 [![Python](https://img.shields.io/badge/Python-%3E%3D3.12-blue)](https://python.org/)
 
+# Musicer
+
 AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于音乐。
+
+![image-20260607202556505](./assets/image-20260607202556505.png)
+
+![image-20260607202621362](./assets/image-20260607202621362.png)
 
 ## Features
 
 - **LangGraph ReAct Agent** — LLM 自主决策工具调用，多轮迭代推理，SSE 流式输出
+- **前端 LLM 配置** — 齿轮按钮打开设置弹窗，随时切换 API Key / Base URL / Model，无需重启
 - **双模式切换** — 本地曲库搜索 / B站云端搜索
+- **云端本地优先** — 云端 ADD 自动检测本地已有文件，避免重复转换
 - **B站全链路** — 视频搜索（WBI 签名）→ 转 MP3 下载 → 弹幕叠加播放 → 自动入库知识库
+- **弹幕播放** — 播放 B站歌曲时实时叠加弹幕，同步播放进度
 - **分层记忆系统** — 短期（对话）/ 中期（JSONL 历史）/ 长期（用户画像），Dream 引擎自动沉淀
 - **LLM-Wiki 知识库** — 基于 Karpathy llm-wiki 方法论，自动消化入库歌曲为结构化知识库
 - **场景感知推荐** — 自定义场景（编程/跑步/睡觉等），每个场景独立维护偏好
@@ -17,49 +26,57 @@ AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于
 
 ## Tech Stack
 
-| 层     | 技术                                              |
-| ------ | ------------------------------------------------- |
-| 前端   | Next.js 16 (App Router) / React 19 / TypeScript 5 |
-| 样式   | Tailwind CSS 4 + CSS Variables                    |
-| 后端   | Python FastAPI + LangGraph                        |
-| AI     | LangGraph React Agent（OpenAI 兼容 API）          |
-| 记忆   | JSONL 历史 + Markdown 用户画像 + Dream 引擎       |
-| 知识库 | LLM-Wiki（本地 Markdown wiki + grep 检索）        |
+| 层       | 技术                                              |
+| -------- | ------------------------------------------------- |
+| 前端     | Next.js 16 (App Router) / React 19 / TypeScript 5 |
+| 样式     | Tailwind CSS 4 + CSS Variables                    |
+| 3D       | Three.js（MusicVisualizer / ParticleBackground）  |
+| 后端     | Python FastAPI + LangGraph                        |
+| AI       | LangGraph React Agent（OpenAI 兼容 API）          |
+| 记忆     | JSONL 历史 + Markdown 用户画像 + Dream 引擎       |
+| 知识库   | LLM-Wiki（本地 Markdown wiki + grep 检索）        |
+| 数据库   | SQLite（播放列表持久化）                          |
+| 外部工具 | bv2mp3 + ffmpeg（视频转音频）                     |
 
 ## Architecture
 
 ```
-┌─────────────────┐     HTTP/SSE      ┌─────────────────────────────────┐
-│   Next.js 前端   │ ◄──────────────► │  FastAPI 后端                    │
-│   localhost:3002 │                   │  localhost:8000                 │
-└─────────────────┘                   └─────────────────────────────────┘
-                                              │
-                                    ┌─────────┴─────────┐
-                                    │   LangGraph Agent  │
-                                    │  ┌──────────────┐  │
-                                    │  │   AgentNode  │  │
-                                    │  │  (LLM 决策)  │  │
-                                    │  └──────┬───────┘  │
-                                    │         │          │
-                                    │  ┌──────▼───────┐  │
-                                    │  │   ToolNode   │  │
-                                    │  └──────────────┘  │
-                                    └─────────────────────┘
-                                              │
-                          ┌───────────────────┼───────────────────┐
-                          ▼                   ▼                   ▼
-                   ┌─────────────┐   ┌──────────────┐   ┌──────────────┐
-                   │ 本地曲库     │   │ B站云端搜索   │   │ LLM-Wiki     │
-                   │ local_search│   │ bili_search  │   │ wiki_search  │
-                   └─────────────┘   └──────────────┘   └──────────────┘
-                                              │
-                                              ▼
-                                   ┌──────────────────┐
-                                   │  分层记忆系统      │
-                                   │  ├ 短期: 对话上下文 │
-                                   │  ├ 中期: history   │
-                                   │  └ 长期: profile   │
-                                   └──────────────────┘
+┌─────────────────────┐     HTTP/SSE      ┌─────────────────────────────────┐
+│   Next.js 前端       │ ◄──────────────► │  FastAPI 后端                    │
+│   localhost:3002     │                   │  localhost:8000                 │
+│                     │                   │                                 │
+│  ┌───────────────┐  │   GET/PUT         │  ┌─────────────────────────┐    │
+│  │ SettingsModal  │  │                   │  │  /api/config            │    │
+│  │ (LLM 配置)    │──┼───────────────────┼──│  (运行时配置更新)        │    │
+│  └───────────────┘  │                   │  └─────────────────────────┘    │
+└─────────────────────┘                   └─────────────────────────────────┘
+                                                  │
+                                        ┌─────────┴─────────┐
+                                        │   LangGraph Agent  │
+                                        │  ┌──────────────┐  │
+                                        │  │   AgentNode  │  │
+                                        │  │  (LLM 决策)  │  │
+                                        │  └──────┬───────┘  │
+                                        │         │          │
+                                        │  ┌──────▼───────┐  │
+                                        │  │   ToolNode   │  │
+                                        │  └──────────────┘  │
+                                        └─────────────────────┘
+                                                  │
+                              ┌───────────────────┼───────────────────┐
+                              ▼                   ▼                   ▼
+                       ┌─────────────┐   ┌──────────────┐   ┌──────────────┐
+                       │ 本地曲库     │   │ B站云端搜索   │   │ LLM-Wiki     │
+                       │ local_search│   │ bili_search  │   │ wiki_search  │
+                       └─────────────┘   └──────────────┘   └──────────────┘
+                                                  │
+                                                  ▼
+                                       ┌──────────────────┐
+                                       │  分层记忆系统      │
+                                       │  ├ 短期: 对话上下文 │
+                                       │  ├ 中期: history   │
+                                       │  └ 长期: profile   │
+                                       └──────────────────┘
 ```
 
 ## Getting Started
@@ -69,6 +86,8 @@ AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于
 - Node.js >= 20
 - Python >= 3.12（推荐使用 [uv](https://docs.astral.sh/uv/) 管理）
 - AI API Key（推荐 [DeepSeek](https://platform.deepseek.com/api_keys)）
+- ffmpeg（视频转音频依赖）
+- bv2mp3：`npm install -g bv2mp3`
 
 ### 1. 克隆项目
 
@@ -97,6 +116,8 @@ OPENAI_API_KEY=your-api-key-here
 ```
 
 > 前后端的 `MUSIC_DIR` 需保持一致，指向同一个音乐目录。
+
+也可以启动后通过前端齿轮按钮（⚙）在线配置 LLM 参数，配置会自动写入 `backend/.env.local`。
 
 ### 3. 安装依赖
 
@@ -133,6 +154,8 @@ npm run dev
 
 访问 http://localhost:3002
 
+首次使用点击左上角齿轮按钮 ⚙ 配置 LLM API Key。
+
 ## Port Configuration
 
 | 服务 | 默认端口 | 配置位置                                             |
@@ -148,81 +171,105 @@ npm run dev
 ```
 Musicer/
 ├── frontend/                   # Next.js 前端
-│   ├── app/                    # Next.js App Router
-│   │   ├── api/                # API 路由代理（chat, bili, history, scenarios, wiki...）
+│   ├── app/
+│   │   ├── page.tsx            # 主页面（单页应用）
+│   │   ├── layout.tsx          # 根布局（字体、全局样式）
+│   │   ├── api/                # API 路由代理（转发至后端）
+│   │   │   ├── chat/           # SSE 流式聊天
+│   │   │   ├── config/         # LLM 配置读写
+│   │   │   ├── bili/           # B站搜索 + 弹幕
+│   │   │   ├── tracks/         # 音频文件服务
+│   │   │   ├── playlist/       # 播放列表
+│   │   │   ├── scenarios/      # 场景管理
+│   │   │   ├── history/        # 对话历史
+│   │   │   └── wiki/           # 知识库操作
 │   │   ├── components/         # UI 组件（Atomic Design）
-│   │   │   ├── atoms/          # 原子组件
-│   │   │   ├── molecules/      # 分子组件
-│   │   │   └── organisms/      # 有机体组件
+│   │   │   ├── atoms/          # Logo, ModeSwitch, DanmakuOverlay...
+│   │   │   ├── molecules/      # ChatMessage, ControlBar, SeekBar...
+│   │   │   └── organisms/      # Player, AgentChat, SettingsModal...
 │   │   ├── context/            # React Context 状态管理
-│   │   ├── hooks/              # 自定义 Hooks
-│   │   └── lib/                # 共享逻辑（API、类型、工具函数）
-│   ├── .env                    # 前端环境变量（BACKEND_URL）
-│   ├── tsconfig.json
-│   ├── next.config.ts
-│   └── package.json
+│   │   │   ├── AgentContext     # AI 聊天状态
+│   │   │   ├── PlayerContext    # 音频播放状态
+│   │   │   ├── DanmakuContext   # 弹幕状态
+│   │   │   └── ModeContext      # 本地/云端模式
+│   │   ├── hooks/              # useAudioPlayer, useSSE, useClock
+│   │   └── lib/                # API, Types, Bilibili WBI 签名
+│   └── .env                    # 前端环境变量
+│
 ├── backend/                    # Python 后端
-│   ├── routers/                # API 路由（chat, bili, search, tracks, dream, scenario, wiki, history）
+│   ├── main.py                 # FastAPI 入口 + 生命周期管理
+│   ├── config.py               # 配置管理（支持运行时更新）
+│   ├── models.py               # Pydantic 数据模型
+│   ├── routers/                # API 路由
+│   │   ├── chat.py             # POST /api/chat（SSE 流式）
+│   │   ├── config.py           # GET/PUT /api/config
+│   │   ├── bili.py             # B站搜索 + 弹幕
+│   │   ├── search.py           # 本地曲库搜索
+│   │   ├── tracks.py           # 音频文件服务 + bvid 查询
+│   │   ├── playlist.py         # 播放列表 CRUD
+│   │   ├── scenario.py         # 场景管理
+│   │   ├── dream.py            # Dream 引擎触发
+│   │   ├── history.py          # 对话历史
+│   │   └── wiki.py             # LLM-Wiki 操作
 │   ├── services/               # 业务逻辑
 │   │   ├── ai_agent.py         # LangGraph Agent（核心）
-│   │   ├── bili_client.py      # B站 API 客户端（WBI 签名）
-│   │   ├── music_manager.py    # 本地音乐管理
-│   │   ├── memory_manager.py   # 分层记忆管理
-│   │   ├── dream_engine.py     # Dream 引擎（画像总结）
-│   │   ├── scenario_manager.py # 场景管理
-│   │   ├── skill_loader.py     # Agent 技能加载器
+│   │   ├── bili_client.py      # B站 API（WBI 签名）
+│   │   ├── music_manager.py    # 本地音乐扫描
+│   │   ├── memory_manager.py   # 分层记忆
+│   │   ├── dream_engine.py     # Dream 引擎
 │   │   ├── wiki_ingest.py      # LLM-Wiki 入库
-│   │   ├── wiki_manager.py     # LLM-Wiki 状态管理
-│   │   └── system_init.py      # 启动初始化
-│   ├── main.py                 # FastAPI 入口
-│   ├── config.py               # 配置管理
-│   ├── .env                    # 后端配置
-│   └── .env.local              # 后端私密配置（API Key）
-├── skills/                     # Agent 技能（SKILL.md）
+│   │   └── playlist_store.py   # SQLite 播放列表
+│   ├── .env / .env.local       # 后端配置
+│   └── requirements.txt
+│
+├── skills/                     # Agent 技能定义（SKILL.md）
 │   ├── cloud-search/           # B站云端搜索
 │   ├── convert/                # 视频转音频
 │   ├── local-search/           # 本地曲库搜索
-│   └── slash-commands/         # 斜杠命令（/reset-wiki, /help）
+│   └── slash-commands/         # 斜杠命令
+│
 ├── memory/                     # 记忆系统
 │   ├── template/               # 模板文件
 │   └── data/                   # 运行时数据（gitignore）
-├── LLM-Wiki/                   # 知识库（gitignore，运行时生成）
-├── db/                         # 配置数据
-│   └── scenario.yml            # 场景列表
-├── package.json                # npm 工作区配置
+│
+├── LLM-Wiki/                   # 知识库（运行时生成）
+├── Documents/bili/             # 默认音乐存储目录
+├── db/scenario.yml             # 场景配置
 └── docker-compose.yml
 ```
 
-## Slash Commands
-
-在聊天中输入 `/命令名` 执行管理操作：
-
-| 命令            | 说明                 |
-| --------------- | -------------------- |
-| `/reset-wiki` | 重置 LLM-Wiki 知识库 |
-| `/help`       | 显示所有可用命令     |
-
-扩展新命令：在 `skills/slash-commands/SKILL.md` 中添加命令说明，在 `backend/services/ai_agent.py` 中添加对应的 `@tool` 函数。
-
 ## API Endpoints
 
-| 方法     | 路径                                 | 说明                            |
-| -------- | ------------------------------------ | ------------------------------- |
-| POST     | `/api/chat`                        | AI Agent 聊天（SSE 流式响应）   |
-| GET      | `/api/search?q=关键词`             | 本地曲库搜索                    |
-| GET      | `/api/bili/search?keyword=关键词`  | B站视频搜索                     |
-| GET      | `/api/bili/danmaku?bvid=BVxxx`     | 获取视频弹幕                    |
-| GET      | `/api/tracks/scan?subDir=20250430` | 扫描指定日期目录                |
-| GET      | `/api/tracks/{path}`               | 服务音频文件（支持 Range 请求） |
-| POST     | `/api/dream/run`                   | 手动触发 Dream 引擎             |
-| GET/POST | `/api/scenarios`                   | 场景列表 / 创建场景             |
-| DELETE   | `/api/scenarios/{name}`            | 删除场景                        |
-| GET      | `/api/history`                     | 获取对话历史                    |
-| GET      | `/api/wiki/status`                 | LLM-Wiki 状态                   |
-| POST     | `/api/wiki/init`                   | 初始化 LLM-Wiki                 |
-| POST     | `/api/wiki/query`                  | LLM-Wiki 检索                   |
+| 方法            | 路径                                | 说明                                 |
+| --------------- | ----------------------------------- | ------------------------------------ |
+| POST            | `/api/chat`                       | AI Agent 聊天（SSE 流式响应）        |
+| GET             | `/api/config`                     | 获取当前 LLM 配置（API Key 脱敏）    |
+| PUT             | `/api/config`                     | 更新 LLM 配置（持久化到 .env.local） |
+| GET             | `/api/search?q=关键词`            | 本地曲库搜索                         |
+| GET             | `/api/bili/search?keyword=关键词` | B站视频搜索                          |
+| GET             | `/api/bili/danmaku?bvid=BVxxx`    | 获取视频弹幕                         |
+| GET             | `/api/tracks/scan?subDir=日期`    | 扫描指定日期目录                     |
+| GET             | `/api/tracks/by-bvid?bvid=BVxxx`  | 按 BV 号查找本地文件                 |
+| GET             | `/api/tracks/{path}`              | 服务音频文件（支持 Range 请求）      |
+| GET/POST        | `/api/playlist`                   | 获取/替换播放列表                    |
+| GET/POST/DELETE | `/api/scenarios`                  | 场景 CRUD                            |
+| POST            | `/api/dream`                      | 手动触发 Dream 引擎                  |
+| GET             | `/api/history`                    | 获取对话历史                         |
+| GET/POST        | `/api/wiki/status`                | LLM-Wiki 状态/初始化                 |
 
 ## Usage
+
+### LLM 配置
+
+点击左上角齿轮按钮 ⚙ 打开设置弹窗，配置：
+
+| 字段       | 说明                                            |
+| ---------- | ----------------------------------------------- |
+| Base URL   | LLM API 地址（如 `https://api.deepseek.com`） |
+| API Key    | 你的 API Key                                    |
+| Model Name | 模型名称（如 `deepseek-chat`）                |
+
+配置保存后立即生效，无需重启后端。
 
 ### 本地模式
 
@@ -243,6 +290,15 @@ Musicer/
 - "我平时喜欢听什么" — 从长期记忆中查询偏好
 - "云端搜一首摇滚" — B站搜索 + 自动入库到 LLM-Wiki
 
+### 斜杠命令
+
+在聊天中输入 `/命令名` 执行管理操作：
+
+| 命令            | 说明                 |
+| --------------- | -------------------- |
+| `/reset-wiki` | 重置 LLM-Wiki 知识库 |
+| `/help`       | 显示所有可用命令     |
+
 ## Platform
 
 | 平台    | 支持情况                        |
@@ -259,6 +315,6 @@ docker-compose up
 
 ## License
 
-本项目采用 [CC BY-NC-SA 4.0](LICENSE) 协议。
+本项目采用 [MIT](LICENSE) 协议。
 
-你可以自由地查看、修改和分享本项目代码，但 **禁止用于商业用途**。衍生作品须以相同协议分发。
+Copyright (c) 2026 QuanLong427

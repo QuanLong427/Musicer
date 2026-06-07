@@ -1,7 +1,8 @@
 "use client";
 
-import type { AgentState, ChatMessage } from "@/app/lib/types";
+import type { AgentState, ChatMessage, Track } from "@/app/lib/types";
 import { useMode } from "@/app/context/ModeContext";
+import { usePlayer } from "@/app/context/PlayerContext";
 import { useSSE } from "@/app/hooks/useSSE";
 import { apiUrl } from "@/app/lib/api";
 import {
@@ -17,6 +18,19 @@ import {
 
 export type ConvertTrack = { bvid: string; title?: string; author?: string };
 
+function parseTracksFromMessage(content: string): Track[] {
+  const match = content.match(/```tracks\s*\n([\s\S]*?)```/);
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    const arr = Array.isArray(parsed) ? parsed : parsed?.tracks;
+    if (Array.isArray(arr)) {
+      return arr.filter((t: Record<string, unknown>) => t && t.id && t.title);
+    }
+  } catch { /* not valid JSON */ }
+  return [];
+}
+
 type AgentCtxValue = AgentState & {
   sendMessage: (text: string) => Promise<void>;
   queueConvert: (tracks: ConvertTrack[]) => void;
@@ -29,6 +43,7 @@ type AgentCtxValue = AgentState & {
   scenarios: string[];
   addScenario: (name: string) => Promise<void>;
   deleteScenario: (name: string) => Promise<void>;
+  onConvertedTracksRef: React.RefObject<((tracks: Track[]) => void) | null>;
 };
 
 const AgentContext = createContext<AgentCtxValue | null>(null);
@@ -173,6 +188,8 @@ export function AgentProvider({
 }) {
   const { mode } = useMode();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const streamingIdRef = useRef<string | null>(null);
 
@@ -181,6 +198,15 @@ export function AgentProvider({
   const [convertQueue, setConvertQueue] = useState<ConvertTrack[]>([]);
   const [convertingSet, setConvertingSet] = useState<Set<string>>(new Set());
   const [convertedSet, setConvertedSet] = useState<Set<string>>(new Set());
+  const onConvertedTracksRef = useRef<((tracks: Track[]) => void) | null>(null);
+
+  // Register auto-add callback from PlayerContext
+  const { addTracks } = usePlayer();
+  useEffect(() => {
+    onConvertedTracksRef.current = (tracks: Track[]) => {
+      addTracks(tracks);
+    };
+  }, [addTracks]);
 
   const historyRef = useRef<Array<{ role: string; content: string }>>([]);
 
@@ -258,11 +284,13 @@ export function AgentProvider({
   }, [sseCancel]);
 
   const prevLoadingRef = useRef(loading);
+  const prevConvertingRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const wasLoading = prevLoadingRef.current;
     prevLoadingRef.current = loading;
 
     if (wasLoading && !loading) {
+      const hadConverting = prevConvertingRef.current.size > 0;
       setConvertingSet((prev) => {
         if (prev.size > 0) {
           setConvertedSet((done) => {
@@ -271,8 +299,23 @@ export function AgentProvider({
             return next;
           });
         }
+        prevConvertingRef.current = prev;
         return new Set();
       });
+
+      // Auto-add converted tracks to playlist
+      if (hadConverting && onConvertedTracksRef.current) {
+        const lastAgentMsg = [...messagesRef.current]
+          .reverse()
+          .find((m) => m.role === "agent");
+        if (lastAgentMsg) {
+          const tracks = parseTracksFromMessage(lastAgentMsg.content);
+          if (tracks.length > 0) {
+            onConvertedTracksRef.current(tracks);
+          }
+        }
+      }
+
       if (convertQueueRef.current.length > 0) {
         setTimeout(() => flush(), 50);
       }
@@ -404,6 +447,7 @@ export function AgentProvider({
       scenarios,
       addScenario,
       deleteScenario,
+      onConvertedTracksRef,
     }),
     [messages, loading, sessionId, sendMessage, queueConvert, cancel, convertQueue, convertingSet, convertedSet, currentScenario, scenarios, addScenario, deleteScenario]
   );
