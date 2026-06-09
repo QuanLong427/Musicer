@@ -1,7 +1,7 @@
 import json
 import os
 import subprocess
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, List
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
@@ -15,6 +15,8 @@ import logging
 from config import settings, IS_WINDOWS, PLATFORM_HINT, PROJECT_ROOT
 from services.skill_loader import discover_skills, load_skill
 from services.memory_manager import append_history, read_profile
+from services.wiki_manager import load_alias_index
+from services.wiki_ingest import resolve_name
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,7 @@ _BASE_PROMPT = """你是 Musicer 的 AI 音频助手。保持简洁的中文终�
 路由优先级：**知识库查询 → 本地优先 → 云端兜底 → 转换收尾**
 
 0. **知识库查询**（用户问音乐知识、偏好、历史、推荐但未指定具体歌名时）→ 先用 `wiki_search` 搜索知识库
-   - 有结果 → 基于知识库内容回答，并用 `local_search` 或 `bili_search` 补充具体歌曲
+   - 有结果 → 基于知识库内容回答，仅在用户明确要求播放时才用 `local_search` 搜索歌曲
    - 无结果 → 跳过，走正常流程
 1. **播放/搜索请求**：必须先用 `local_search` 搜索本地曲库
    - 本地有结果（total > 0）→ 直接推荐本地文件，**严禁调用 convert_video 或 bili_search**
@@ -102,7 +104,8 @@ _BASE_PROMPT = """你是 Musicer 的 AI 音频助手。保持简洁的中文终�
 **触发条件**（必须调用 `wiki_search`）：
 - 用户问音乐知识、偏好、历史、推荐，但**未指定具体歌名**
 - 示例："我平时喜欢听什么风格" → `wiki_search("风格偏好")`
-- 示例："推荐一些摇滚" → `wiki_search("摇滚")` + `local_search("rock")`
+- 示例："推荐一些摇滚" → `wiki_search("摇滚")`（仅当用户明确要求播放时才调用 `local_search`）
+- 示例："推荐三首歌给我" → `wiki_search("推荐英伦摇滚或华语流行，偏好Coldplay和Oasis")`（根据上方用户画像中的偏好信息构造 query）
 
 **非触发条件**（不要调用 `wiki_search`）：
 - 用户明确说"播放XX"、指定歌名 → 直接走播放流程
@@ -211,8 +214,7 @@ def _extract_scenario_section(profile_text: str, scenario: str = "默认") -> st
 
 
 def _trigger_wiki_ingest(urls: list[str], song_meta_json: str, target_dir: str) -> None:
-    """Trigger wiki ingest asynchronously after successful conversion."""
-    import threading
+    """Trigger wiki ingest synchronously after successful conversion."""
     import re
 
     def _parse_filename_meta(filename: str) -> dict:
@@ -308,8 +310,7 @@ def _trigger_wiki_ingest(urls: list[str], song_meta_json: str, target_dir: str) 
         except Exception as e:
             logger.error(f"[wiki] Trigger failed: {e}")
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    _run()
 
 
 # ── LangGraph Agent ─────────────────────────────────────────────────────────
@@ -503,8 +504,19 @@ def _build_tools(scenario: str = "默认") -> list:
                 else:
                     converted_files.append({"original": f, "renamed": f, "bvid": bvid or None})
 
-            # Trigger wiki ingest
+            # Trigger wiki ingest (synchronous)
             _trigger_wiki_ingest(urls, song_meta_json, target_dir)
+
+            # Rescan target_dir to get final filenames after wiki_ingest rename
+            if os.path.isdir(target_dir):
+                current_files = os.listdir(target_dir)
+                for entry in converted_files:
+                    bvid = entry.get("bvid")
+                    if bvid:
+                        for f in current_files:
+                            if bvid in f and f.endswith(".mp3"):
+                                entry["renamed"] = f
+                                break
 
             return json.dumps({"success": True, "files": converted_files, "errors": []}, ensure_ascii=False)
 
@@ -526,73 +538,85 @@ def _build_tools(scenario: str = "默认") -> list:
     @tool
     def wiki_search(query: str) -> str:
         """Search the music knowledge base (LLM-Wiki) for information about songs, artists, genres, and albums. Use this when the user asks about music knowledge, preferences, history, or wants recommendations based on past listening. Do NOT use this when the user specifies an exact song title to play."""
-        # Inject user profile summary for context-aware search
+        # Step 1: LLM query understanding
+        kw_result = _extract_query_keywords(query)
+        entities = kw_result.get("entities", [query])
+        intent = kw_result.get("intent", query)
+
+        # Step 2: Resolve aliases to canonical names
+        alias_index = load_alias_index()
+        resolved = [resolve_name(e, alias_index) for e in entities]
+
+        # Step 2.5: Inject profile entities for recommendation queries
+        if _is_recommendation_intent(intent):
+            profile_entities = _extract_profile_entities(scenario)
+            for pe in profile_entities:
+                resolved_name = resolve_name(pe, alias_index)
+                if resolved_name not in resolved:
+                    resolved.append(resolved_name)
+
+        # Step 3: Build structured query
+        enhanced_query = f"搜索关键词: {', '.join(set(resolved))}\n搜索意图: {intent}"
+
+        # Step 4: Inject user profile summary
         profile_summary = _extract_profile_summary(scenario)
-        enhanced_query = query
         if profile_summary:
-            enhanced_query = f"{query}\n\n[用户画像参考] {profile_summary}"
+            enhanced_query += f"\n\n[用户画像参考] {profile_summary}"
 
         sub_agent = _build_wiki_sub_agent()
         result = sub_agent.invoke(
             {"messages": [HumanMessage(content=enhanced_query)]},
-            config={"recursion_limit": 15},
+            config={"recursion_limit": 50},
         )
         last_msg = result["messages"][-1]
         return last_msg.content if hasattr(last_msg, "content") else str(last_msg)
 
-    @tool
-    def reset_wiki() -> str:
-        """Reset the LLM-Wiki knowledge base. Deletes all data and re-initializes a fresh wiki structure. Use when the user sends /reset-wiki."""
-        import shutil
-        from config import PROJECT_ROOT
-        wiki_dir = os.path.join(PROJECT_ROOT, "LLM-Wiki")
-        try:
-            if os.path.exists(wiki_dir):
-                shutil.rmtree(wiki_dir)
-                logger.info("[wiki] Deleted LLM-Wiki directory")
-            from services.wiki_manager import init_wiki
-            init_wiki()
-            return "LLM-Wiki 已重置并重新初始化完成"
-        except Exception as e:
-            return f"[error] 重置失败: {e}"
-
-    return [bash, bili_search, local_search, convert_video, read_file, wiki_search, reset_wiki]
+    return [bash, bili_search, local_search, convert_video, read_file, wiki_search]
 
 
 # ── Wiki Sub-Agent ──────────────────────────────────────────────────────────
 
 _WIKI_SUB_AGENT_PROMPT = """你是 Musicer 的知识库检索子 Agent。你的唯一任务是搜索 LLM-Wiki 知识库并返回结果。
 
+查询格式：搜索关键词: 关键词1, 关键词2\n搜索意图: 描述
+
 ## 检索流程（必须严格按顺序执行）
 
 ### Step 1: 在 index.md 中搜索关键词
-先用 grep 在索引文件中搜索用户查询的关键词，获取匹配的实体名：
+用 grep 在索引文件中搜索关键词，获取匹配的实体名和分类：
 ```bash
-grep -i "用户关键词" "{wiki_dir}/index.md"
+grep -i "关键词" "{wiki_dir}/index.md"
 ```
 如果 index.md 很大，不要 cat 整个文件，只用 grep 获取匹配行。
 
-### Step 2: 别名展开
-读取 `.wiki-schema.md` 的 Alias Table 部分：
-```bash
-grep -A 20 "## Alias Table" "{wiki_dir}/.wiki-schema.md"
-```
-规则：A=B 时不跨组传递 B=C。将用户查询关键词按别名表展开。
+从匹配行推导文件路径（根据 section 和实体名）：
+- `## Artists` 下的 `[[周杰伦]]` → `wiki/entities/artists/周杰伦.md`
+- `## Songs` 下的 `[[晴天]]` → `wiki/entities/songs/晴天.md`
+- `## Albums` 下的 `[[范特西]]` → `wiki/entities/albums/范特西.md`
+- `## Genres` 下的 `[[摇滚]]` → `wiki/entities/genres/摇滚.md`
 
-### Step 3: Grep 搜索 wiki/ 目录
-用展开后的关键词搜索实体目录：
+如果 index.md 无匹配，fallback 搜索文件内容：
 ```bash
-grep -r -i -l "关键词1|关键词2|关键词3" "{wiki_dir}/wiki/"
+grep -r -i -l "关键词" "{wiki_dir}/wiki/entities/"
 ```
 
-### Step 4: 读取匹配的页面
-对 Step 1 和 Step 3 中匹配到的文件，读取内容：
+### Step 2: 读取文件 + 链接遍历（1 层）
+对 Step 1 中推导出的文件路径，读取内容：
 ```bash
 cat "{wiki_dir}/wiki/entities/artists/周杰伦.md"
 ```
 单页超过 2000 字时只读 frontmatter + 前 500 字。
 
-### Step 5: 排序规则
+**链接遍历**：读取文件时，提取其中的 `[[wikilinks]]` 链接（格式：`[[实体名]]`）。
+对每个链接，根据实体类型构造路径并读取：
+- [[歌手名]] → `wiki/entities/artists/{{歌手名}}.md`
+- [[歌曲名]] → `wiki/entities/songs/{{歌曲名}}.md`
+- [[专辑名]] → `wiki/entities/albums/{{专辑名}}.md`
+- [[流派名]] → `wiki/entities/genres/{{流派名}}.md`
+
+**只遍历 1 层**：链接遍历读取的页面中的新链接不再递归。
+
+### Step 3: 排序规则
 - 文件名精确命中 → 100 分
 - index.md 中有 [[wiki链接]] → 80 分
 - 正文关键词出现次数 × 10 → 最高 50 分
@@ -602,7 +626,12 @@ cat "{wiki_dir}/wiki/entities/artists/周杰伦.md"
 搜索完成后，用自然语言综合回答用户的问题，引用知识库中的具体信息。
 如果查询中包含 [用户画像参考]，请结合用户的偏好（音乐类型、歌手等）来筛选和排序搜索结果，优先推荐与用户画像匹配的内容。
 
-如果知识库中没有相关内容，直接说"知识库中暂无相关信息"，不要编造。"""
+如果知识库中没有相关内容，直接说"知识库中暂无相关信息"，不要编造。
+
+## 重要：停止条件
+- 你最多只能执行 5 次 bash 工具调用（grep + cat）
+- 搜索到足够信息后立即用自然语言回答，不要继续搜索
+- 如果 grep 搜索 index.md 后已找到匹配的实体，直接读取对应文件即可，不需要再做额外搜索"""
 
 
 def _build_wiki_sub_agent():
@@ -666,6 +695,124 @@ def _build_wiki_sub_agent():
     graph.add_edge("tools", "agent")
 
     return graph.compile()
+
+
+def _extract_query_keywords(query: str) -> dict:
+    """Use LLM to extract entity keywords and search intent from user query.
+
+    Returns {"entities": [...], "intent": "..."}.
+    Falls back to raw query on failure.
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
+            model=settings.MODEL_NAME,
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL,
+            max_completion_tokens=256,
+            streaming=False,
+        )
+        resp = llm.invoke([
+            SystemMessage(content=(
+                "从用户查询中提取音乐实体关键词（歌曲名、歌手名、流派名、专辑名）和搜索意图。\n"
+                "返回 JSON 格式：{\"entities\": [\"关键词1\", \"关键词2\"], \"intent\": \"搜索意图描述\"}\n"
+                "只返回 JSON，不要其他内容。"
+            )),
+            HumanMessage(content=query),
+        ])
+        text = resp.content.strip()
+        # Extract JSON from response (handle markdown code blocks)
+        if "```" in text:
+            text = text.split("```")[1].strip()
+            if text.startswith("json"):
+                text = text[4:].strip()
+        return json.loads(text)
+    except Exception as e:
+        logger.warning(f"[wiki] Query keyword extraction failed: {e}")
+        return {"entities": [query], "intent": query}
+
+
+def _is_recommendation_intent(intent: str) -> bool:
+    """Check if the intent is recommendation-related."""
+    keywords = ["推荐", "建议", "推荐歌", "推荐音乐", "推荐一些", "有什么歌", "有什么音乐", "适合听", "想听"]
+    return any(kw in intent for kw in keywords)
+
+
+def _extract_profile_entities(scenario: str = "默认") -> List[str]:
+    """Extract genre and artist names from user profile for query enrichment."""
+    try:
+        profile = read_profile()
+        if not profile.strip():
+            return []
+        lines = profile.split("\n")
+
+        target_scenario = scenario or "默认"
+        scenario_start = None
+        scenario_end = None
+        fallback_start = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("## 场景:"):
+                sname = stripped.replace("## 场景:", "").strip()
+                if sname == target_scenario:
+                    scenario_start = i
+                elif sname == "默认" and fallback_start is None:
+                    fallback_start = i
+                elif scenario_start is not None and scenario_end is None:
+                    scenario_end = i
+
+        if scenario_start is None:
+            scenario_start = fallback_start
+        if scenario_start is None:
+            return []
+
+        if scenario_end is None:
+            for i in range(scenario_start + 1, len(lines)):
+                if lines[i].strip().startswith("## "):
+                    scenario_end = i
+                    break
+            if scenario_end is None:
+                scenario_end = len(lines)
+
+        entities = []
+        in_types = False
+        in_artists = False
+        for i in range(scenario_start, scenario_end):
+            stripped = lines[i].strip()
+            if stripped == "### 最爱音乐类型":
+                in_types = True
+                in_artists = False
+            elif stripped == "### 核心偏好歌手/乐队":
+                in_types = False
+                in_artists = True
+            elif stripped.startswith("### ") or stripped.startswith("## "):
+                in_types = False
+                in_artists = False
+            elif in_types and stripped.startswith(("1.", "2.", "3.")):
+                # Extract genre name: "1. **英伦摇滚** (占比: 66.7%)" → "英伦摇滚"
+                import re
+                m = re.search(r"\*\*(.+?)\*\*", stripped)
+                if m:
+                    entities.append(m.group(1))
+            elif in_artists and stripped.startswith("* "):
+                # Extract artist names from line like "* **华语/亚洲:** 飞儿乐团 (F.I.R.), 彭佳慧"
+                import re
+                # Get text after the colon
+                colon_idx = stripped.find(":")
+                if colon_idx >= 0:
+                    names_str = stripped[colon_idx + 1:].strip()
+                    # Split by comma, paren, or Chinese comma
+                    parts = re.split(r"[,，、()（）]", names_str)
+                    for p in parts:
+                        p = p.strip()
+                        if p and p != "作曲家 E":
+                            entities.append(p)
+            if len(entities) >= 10:
+                break
+
+        return entities
+    except Exception:
+        return []
 
 
 def _extract_profile_summary(scenario: str = "默认") -> str:

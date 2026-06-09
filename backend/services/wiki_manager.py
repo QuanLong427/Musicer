@@ -6,46 +6,7 @@ from typing import Dict, List, Optional
 
 from config import PROJECT_ROOT, settings
 
-
-WIKI_SCHEMA_TEMPLATE = """# .wiki-schema.md
-
-## Metadata
-- topic: Music Knowledge Base
-- created: {created}
-- language: zh
-- version: 2.0
-
-## Directory Structure
-- `raw/songs/` - Raw song metadata (BVID naming, immutable)
-- `wiki/entities/songs/` - Song entity pages (song name naming)
-- `wiki/entities/artists/` - Artist/band entity pages
-- `wiki/entities/genres/` - Genre/style entity pages
-- `wiki/entities/albums/` - Album entity pages
-- `index.md` - Master index
-- `log.md` - Operation log
-- `proposes.md` - Direction and key questions
-
-## Entity Types
-- `song` - A music track (song name naming, may aggregate multiple raw BVIDs)
-- `artist` - Singer or band
-- `album` - Music album
-- `genre` - Musical style/genre
-
-## Relationship Types
-- `performed_by` - Song performed by artist
-- `part_of` - Song/album belongs to larger collection
-- `similar_style` - Similar musical style
-
-## Alias Table
-- 摇滚 = rock = rock music
-- 流行 = pop = pop music
-- 电子 = electronic = edm
-- 嘻哈 = hip-hop = rap
-- R&B = rhythm and blues
-- 民谣 = folk
-- 古典 = classical
-- 爵士 = jazz
-"""
+WIKI_TEMPLATE_DIR = PROJECT_ROOT / "template" / "wiki"
 
 
 def _ensure_dirs(wiki_dir: str) -> None:
@@ -69,7 +30,7 @@ def _ensure_file(path: str, content: str) -> None:
 
 
 def init_wiki(wiki_dir: Optional[str] = None) -> Dict:
-    """Initialize the wiki directory structure. Returns status dict."""
+    """Initialize the wiki directory structure by copying from template."""
     wiki_dir = wiki_dir or settings.WIKI_DIR
     wiki_path = Path(wiki_dir)
 
@@ -78,27 +39,29 @@ def init_wiki(wiki_dir: Optional[str] = None) -> Dict:
 
     _ensure_dirs(wiki_dir)
 
-    # Write .wiki-schema.md
-    schema_path = os.path.join(wiki_dir, ".wiki-schema.md")
-    _ensure_file(schema_path, WIKI_SCHEMA_TEMPLATE.format(
-        created=datetime.now().strftime("%Y-%m-%d")
-    ))
+    # Copy template files to wiki directory
+    created_date = datetime.now().strftime("%Y-%m-%d")
+    for tpl_file in WIKI_TEMPLATE_DIR.iterdir():
+        if tpl_file.is_file() and not tpl_file.name.startswith("."):
+            dest = os.path.join(wiki_dir, tpl_file.name)
+            if not os.path.exists(dest):
+                content = tpl_file.read_text(encoding="utf-8")
+                content = content.replace("{created}", created_date)
+                with open(dest, "w", encoding="utf-8") as f:
+                    f.write(content)
+
+    # Copy .wiki-schema.md (hidden file)
+    schema_tpl = WIKI_TEMPLATE_DIR / ".wiki-schema.md"
+    schema_dest = os.path.join(wiki_dir, ".wiki-schema.md")
+    if schema_tpl.exists() and not os.path.exists(schema_dest):
+        content = schema_tpl.read_text(encoding="utf-8")
+        content = content.replace("{created}", created_date)
+        with open(schema_dest, "w", encoding="utf-8") as f:
+            f.write(content)
 
     # Write .wiki-cache.json
     cache_path = os.path.join(wiki_dir, ".wiki-cache.json")
     _ensure_file(cache_path, json.dumps({"version": 1, "entries": {}}, indent=2))
-
-    # Write index.md
-    index_path = os.path.join(wiki_dir, "index.md")
-    _ensure_file(index_path, "# Music Knowledge Base Index\n\n## Artists\n\n## Genres\n\n## Albums\n\n## Songs\n")
-
-    # Write log.md
-    log_path = os.path.join(wiki_dir, "log.md")
-    _ensure_file(log_path, "# Operation Log\n\n| Date | Operation | Detail |\n|------|-----------|--------|\n")
-
-    # Write proposes.md
-    proposes_path = os.path.join(wiki_dir, "proposes.md")
-    _ensure_file(proposes_path, "# Direction\n\nBuild a structured knowledge base of music metadata for personalized recommendations.\n\n## Key Questions\n\n1. 用户在当前场景下喜欢应该会想听哪些歌手或者歌曲或者那张专辑的歌曲\n2. 用户的听歌习惯会随着时间发生哪些变化？\n3. 歌曲、流派、歌手与专辑之间存在怎样的关联？\n")
 
     return {"status": "initialized", "wiki_dir": wiki_dir}
 
@@ -145,27 +108,22 @@ def get_wiki_status(wiki_dir: Optional[str] = None) -> Dict:
     }
 
 
-def read_schema_aliases(wiki_dir: Optional[str] = None) -> Dict[str, List[str]]:
-    """Read alias table from .wiki-schema.md for query expansion."""
+def load_alias_index(wiki_dir: Optional[str] = None) -> Dict[str, List[str]]:
+    """Load alias-index.json. Returns empty dict if not found."""
     wiki_dir = wiki_dir or settings.WIKI_DIR
-    schema_path = os.path.join(wiki_dir, ".wiki-schema.md")
-    aliases: Dict[str, List[str]] = {}
+    alias_path = os.path.join(wiki_dir, "alias-index.json")
 
-    if not os.path.exists(schema_path):
-        return aliases
+    if not os.path.exists(alias_path):
+        return {}
 
-    with open(schema_path, "r", encoding="utf-8") as f:
-        in_alias_section = False
-        for line in f:
-            if line.strip() == "## Alias Table":
-                in_alias_section = True
-                continue
-            if in_alias_section and line.startswith("## "):
-                break
-            if in_alias_section and "=" in line:
-                parts = [p.strip() for p in line.strip().split("=")]
-                if len(parts) >= 2:
-                    for part in parts:
-                        aliases[part.lower()] = parts
+    with open(alias_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-    return aliases
+
+def save_alias_index(alias_index: Dict[str, List[str]], wiki_dir: Optional[str] = None) -> None:
+    """Write alias_index dict to alias-index.json."""
+    wiki_dir = wiki_dir or settings.WIKI_DIR
+    alias_path = os.path.join(wiki_dir, "alias-index.json")
+
+    with open(alias_path, "w", encoding="utf-8") as f:
+        json.dump(alias_index, f, indent=2, ensure_ascii=False)

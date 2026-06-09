@@ -33,6 +33,7 @@ function parseTracksFromMessage(content: string): Track[] {
 
 type AgentCtxValue = AgentState & {
   sendMessage: (text: string) => Promise<void>;
+  clearMessages: () => void;
   queueConvert: (tracks: ConvertTrack[]) => void;
   cancel: () => void;
   convertQueue: ConvertTrack[];
@@ -330,13 +331,17 @@ export function AgentProvider({
         if (res.ok) {
           const data = await res.json();
           if (data.history && Array.isArray(data.history) && data.history.length > 0) {
-            const historyMessages: ChatMessage[] = data.history.map((record: Record<string, unknown>) => ({
-              id: newId(),
-              role: (record.role === "agent" ? "agent" : "operator") as "agent" | "operator",
-              content: record.content as string,
-              timestamp: new Date(record.timestamp as string).getTime() || Date.now(),
-            }));
-            setMessages(historyMessages);
+            const clearOffset = data.clear_offset ?? 0;
+            const filtered = data.history.slice(clearOffset);
+            if (filtered.length > 0) {
+              const historyMessages: ChatMessage[] = filtered.map((record: Record<string, unknown>) => ({
+                id: newId(),
+                role: (record.role === "agent" ? "agent" : "operator") as "agent" | "operator",
+                content: record.content as string,
+                timestamp: new Date(record.timestamp as string).getTime() || Date.now(),
+              }));
+              setMessages(historyMessages);
+            }
           }
         }
       } catch {
@@ -409,6 +414,14 @@ export function AgentProvider({
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+
+      // Handle /clear command
+      if (trimmed === "/clear") {
+        await send(trimmed, { history: [], scenario: currentScenario });
+        setMessages([]);
+        return;
+      }
+
       const ts = Date.now();
       setMessages((m) => {
         const next = [
@@ -431,12 +444,17 @@ export function AgentProvider({
     [send, currentScenario]
   );
 
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+  }, []);
+
   const value = useMemo<AgentCtxValue>(
     () => ({
       messages,
       loading,
       sessionId,
       sendMessage,
+      clearMessages,
       queueConvert,
       cancel,
       convertQueue,
@@ -449,7 +467,7 @@ export function AgentProvider({
       deleteScenario,
       onConvertedTracksRef,
     }),
-    [messages, loading, sessionId, sendMessage, queueConvert, cancel, convertQueue, convertingSet, convertedSet, currentScenario, scenarios, addScenario, deleteScenario]
+    [messages, loading, sessionId, sendMessage, clearMessages, queueConvert, cancel, convertQueue, convertingSet, convertedSet, currentScenario, scenarios, addScenario, deleteScenario]
   );
 
   return (

@@ -3,55 +3,79 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from config import settings
+from services.wiki_manager import load_alias_index, save_alias_index
 
 
-STEP1_PROMPT = """You are a music knowledge analyst. Analyze the following song metadata and extract structured information.
+STEP1_PROMPT = """You are a music knowledge analyst. Analyze the following song metadata and extract structured information for building a music knowledge base.
 
 Song Metadata:
 {metadata}
 
 Extract the following as JSON (output ONLY valid JSON, no markdown fences):
 {{
-  "song_summary": "Brief summary of the song content and background (0-50 words, in Chinese)",
-  "artist_info": "Brief artist/band introduction (0-50 words, in Chinese)",
-  "album_info": "Brief album introduction (0-50 words, in Chinese, or empty if unknown)",
-  "genre_info": "Brief genre/style description (0-50 words, in Chinese, or empty if unknown)",
-  "entities": [
+  "song": {{
+    "title": "song title",
+    "overview": "0-100字歌曲介绍，包含：时长、情绪基调、表达主题、口碑、语言"
+  }},
+  "artists": [
     {{
-      "name": "entity name",
-      "type": "artist|album|genre",
-      "relevance": "primary|secondary",
-      "confidence": "EXTRACTED|INFERRED|AMBIGUOUS",
-      "evidence": "what in the metadata supports this"
+      "name": "artist/band name",
+      "aliases": [],
+      "overview": "0-100字歌手/乐队介绍，包含：籍贯(中国内陆、港台、欧美、日本、韩国等)、出道时间、身份（如：歌手、演员等）、擅长风格（如：摇滚、流行等）、代表作（1-5首即可）"
+    }}
+  ],
+  "albums": [
+    {{
+      "name": "album name",
+      "aliases": [],
+      "overview": "0-100字专辑介绍，包含：发表年份、收录歌曲（最出名5首）、专辑主题、代表曲"
+    }}
+  ],
+  "genres": [
+    {{
+      "name": "genre/style name",
+      "aliases": [],
+      "overview": "0-100字流派介绍，包含：流派特点、起源、常用乐器、情绪氛围、代表作品、代表歌手"
     }}
   ],
   "connections": [
     {{
       "from": "source entity name",
       "to": "target entity name",
-      "type": "performed_by|part_of|similar_style",
-      "confidence": "EXTRACTED|INFERRED|AMBIGUOUS",
-      "evidence": "what supports this connection"
+      "type": "performed_by|part_of|similar_style"
     }}
   ]
 }}
 
 Rules:
-- song_summary: describe the song's content, theme, and writing background
-- artist_info: introduce the artist/band's style and significance
-- album_info: introduce the album's theme and release background
-- genre_info: describe the musical genre characteristics
-- artist type: singers, bands, musicians
-- album type: music albums, EPs, singles
-- genre type: musical styles, genres
-- EXTRACTED = directly stated in metadata
-- INFERRED = deduced from context
-- AMBIGUOUS = unclear or conflicting info
-- Include evidence for every entity and connection
-- Output all text in Chinese
+- song overview: describe duration, emotional tone, expressed theme, reputation, language
+- artist overview: describe origin, debut time, identity, styles, representative works
+- album overview: describe release year, notable tracks, album theme, representative songs
+- genre overview: describe characteristics, origin, instruments, mood, representative works/artists
+- performed_by: song → artist
+- part_of: song → album
+- similar_style: artist → genre
+
+常见流派包括：摇滚、流行、电子、嘻哈、R&B、民谣、古典、爵士、DJ（每个流派单独列出，不要合并）
+
+aliases: 列出该实体的已知别名/英文名/简称， 如周杰伦的别名：["周杰伦", "Jay Chou", "周董"]。如果没有别名，输出空数组 []。不要编造不存在的别名。
+
+实体名称规则：
+- 所有实体名称（artists/albums/genres 的 name 字段）不能包含特殊字符（/ \\ : * ? " < > |）
+- 如果 LLM 输出的名称包含特殊字符，只保留最后一个 / 之后的部分（如 "DJ/DJ舞曲" → "DJ舞曲"）
+
+DJ版/翻唱版本处理规则：
+1. 元数据中的 artist 字段大概率是 Bilibili UP主，不一定是歌手
+2. 如果标题包含 "DJ版""Remix""翻唱" 等标识：
+   a. 优先从标题推断 DJ制作人 或 翻唱歌手（如 "关诗敏《晴天》" → 翻唱歌手是 "关诗敏"）
+   b. 如果无法从标题推断，则使用原曲歌手（如 "DJ版《晴天》" → 原曲歌手是 "周杰伦"）
+   c. 如果无法推断原曲歌手，则 artists 输出空数组 []
+3. 如果无法识别专辑，则 albums 输出空数组 []
+
+Output all text in Chinese
 """
 
 
@@ -89,6 +113,9 @@ duration: {song_meta.get('duration', 0)}
 
 ## Description
 {song_meta.get('description', 'No description available.')}
+
+## Linked Song
+[[{song_meta.get('title', '')}]]
 """
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
@@ -164,25 +191,21 @@ def _call_llm(prompt: str) -> str:
 
 def _validate_step1(result: Dict) -> bool:
     """Validate Step 1 JSON output structure."""
-    required_fields = ["song_summary", "entities", "connections"]
-    for field in required_fields:
-        if field not in result:
-            return False
-
-    if not isinstance(result["entities"], list) or not isinstance(result["connections"], list):
+    # Must have song with title
+    if "song" not in result or not isinstance(result["song"], dict):
+        return False
+    if "title" not in result["song"]:
         return False
 
-    valid_confidence = {"EXTRACTED", "INFERRED", "AMBIGUOUS"}
-    for entity in result["entities"]:
-        if not all(k in entity for k in ["name", "type", "confidence"]):
-            return False
-        if entity["confidence"] not in valid_confidence:
-            return False
+    # Must have connections list
+    if "connections" not in result or not isinstance(result["connections"], list):
+        return False
 
+    valid_conn_types = {"performed_by", "part_of", "similar_style"}
     for conn in result["connections"]:
-        if not all(k in conn for k in ["from", "to", "type", "confidence"]):
+        if not all(k in conn for k in ["from", "to", "type"]):
             return False
-        if conn["confidence"] not in valid_confidence:
+        if conn["type"] not in valid_conn_types:
             return False
 
     return True
@@ -201,47 +224,37 @@ def _extract_json(text: str) -> Dict:
     raise ValueError("No valid JSON found in LLM response")
 
 
-def _entity_type_to_dir(etype: str) -> str:
-    """Map entity type to sub-directory name."""
-    mapping = {
-        "song": "songs",
-        "artist": "artists",
-        "genre": "genres",
-        "album": "albums",
-    }
-    return mapping.get(etype, "artists")
+def resolve_name(llm_name: str, alias_index: Dict[str, List[str]]) -> str:
+    """Resolve LLM entity name to canonical name via alias lookup."""
+    for canonical, aliases in alias_index.items():
+        if llm_name in aliases:
+            return canonical
+    return llm_name
 
 
-def _generate_song_entity(song_meta: Dict, analysis: Dict, wiki_dir: str) -> str:
+def _generate_song_entity(song_meta: Dict, analysis: Dict, wiki_dir: str, alias_index: Dict[str, List[str]] = None) -> str:
     """Generate or update song entity page. Returns relative page path."""
+    alias_index = alias_index or {}
     today = datetime.now().strftime("%Y-%m-%d")
-    title = song_meta.get("title", "unknown")
+    title = analysis.get("song", {}).get("title", song_meta.get("title", "unknown"))
+    overview = analysis.get("song", {}).get("overview", "")
+    if not overview:
+        overview = song_meta.get("description", "No description available.")[:200]
     bvid = song_meta.get("bvid", "unknown")
     filepath = os.path.join(wiki_dir, "wiki", "entities", "songs", f"{title}.md")
 
-    # Collect artist/album/genre names from analysis
-    artist_names = []
-    album_name = ""
-    genre_name = ""
-    for entity in analysis.get("entities", []):
-        if entity["type"] == "artist":
-            artist_names.append(entity["name"])
-        elif entity["type"] == "album":
-            album_name = entity["name"]
-        elif entity["type"] == "genre":
-            genre_name = entity["name"]
+    # Build links from new schema (resolve names for consistency)
+    artist_links = "\n".join(f"- [[{resolve_name(a['name'], alias_index)}]]" for a in analysis.get("artists", []))
+    album_links = "\n".join(f"- [[{resolve_name(a['name'], alias_index)}]]" for a in analysis.get("albums", []))
+    genre_links = "\n".join(f"- [[{resolve_name(g['name'], alias_index)}]]" for g in analysis.get("genres", []))
 
-    # Fallback to metadata if LLM didn't extract
-    if not artist_names and song_meta.get("artist"):
-        artist_names = [song_meta["artist"]]
-    if not album_name and song_meta.get("album"):
-        album_name = song_meta["album"]
-    if not genre_name and song_meta.get("genre"):
-        genre_name = song_meta["genre"]
-
-    artist_links = ", ".join(f"[[{a}]]" for a in artist_names) if artist_names else "Unknown"
-    album_link = f"[[{album_name}]]" if album_name else "Unknown"
-    genre_link = f"[[{genre_name}]]" if genre_name else "Unknown"
+    # Fallback: show "Unknown" text (no entity link)
+    if not artist_links:
+        artist_links = "- Unknown"
+    if not album_links:
+        album_links = "- Unknown"
+    if not genre_links:
+        genre_links = "- Unknown"
 
     if os.path.exists(filepath):
         # Update existing: append BVID to sources
@@ -250,7 +263,6 @@ def _generate_song_entity(song_meta: Dict, analysis: Dict, wiki_dir: str) -> str
 
         if bvid not in content:
             content = re.sub(r"(updated:\s*)\S+", rf"\g<1>{today}", content, count=1)
-            # Add bvid to sources list
             if "sources:" in content:
                 content = re.sub(
                     r"(sources:\s*\[)([^\]]*)\]",
@@ -280,16 +292,16 @@ sources: [{bvid}]
 # {title}
 
 ## Overview
-{analysis.get('song_summary', song_meta.get('description', 'No description available.')[:200])}
+{overview}
 
 ## Artists
-{artist_links}
+{artist_links or "- Unknown"}
 
 ## Album
-{album_link}
+{album_links or "- Unknown"}
 
 ## Genre
-{genre_link}
+{genre_links or "- Unknown"}
 """
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
@@ -298,16 +310,19 @@ sources: [{bvid}]
     return os.path.relpath(filepath, wiki_dir)
 
 
-def _generate_artist_entity(analysis: Dict, song_title: str, album_name: str, wiki_dir: str) -> List[str]:
+def _generate_artist_entity(analysis: Dict, song_title: str, wiki_dir: str, alias_index: Dict[str, List[str]] = None, connections: List[Dict] = None) -> List[str]:
     """Create or update artist entity pages. Returns list of relative page paths."""
+    alias_index = alias_index or {}
+    connections = connections or []
     created = []
     today = datetime.now().strftime("%Y-%m-%d")
+    album_names = [resolve_name(a["name"], alias_index) for a in analysis.get("albums", [])]
+    genre_names = [resolve_name(g["name"], alias_index) for g in analysis.get("genres", [])]
 
-    for entity in analysis.get("entities", []):
-        if entity["type"] != "artist":
-            continue
-
-        name = entity["name"]
+    for artist in analysis.get("artists", []):
+        llm_name = artist["name"]
+        name = resolve_name(llm_name, alias_index)
+        overview = artist.get("overview", "Extracted from song metadata.")
         filepath = os.path.join(wiki_dir, "wiki", "entities", "artists", f"{name}.md")
 
         if os.path.exists(filepath):
@@ -316,21 +331,31 @@ def _generate_artist_entity(analysis: Dict, song_title: str, album_name: str, wi
 
             if f"[[{song_title}]]" not in content:
                 content = re.sub(r"(updated:\s*)\S+", rf"\g<1>{today}", content, count=1)
-                # Append song to Songs section
-                if "## Songs" in content:
-                    content = content.replace("## Songs\n", f"## Songs\n- [[{song_title}]]\n")
-                # Append album to Albums section if not there
-                if album_name and f"[[{album_name}]]" not in content and "## Albums" in content:
-                    content = content.replace("## Albums\n", f"## Albums\n- [[{album_name}]]\n")
+                content = _insert_before_next_section(content, "## Songs", f"- [[{song_title}]]")
+                for alb in album_names:
+                    if f"[[{alb}]]" not in content:
+                        content = _insert_before_next_section(content, "## Albums", f"- [[{alb}]]")
+                for g in genre_names:
+                    if f"[[{g}]]" not in content:
+                        content = _insert_before_next_section(content, "## Genre", f"- [[{g}]]")
+
+            # Process connections: performed_by and similar_style
+            for conn in connections:
+                conn_type = conn.get("type", "")
+                if conn_type == "performed_by" and resolve_name(conn.get("to", ""), alias_index) == name:
+                    song_ref = resolve_name(conn.get("from", ""), alias_index)
+                    if f"[[{song_ref}]]" not in content:
+                        content = _insert_before_next_section(content, "## Songs", f"- [[{song_ref}]]")
+                elif conn_type == "similar_style" and resolve_name(conn.get("from", ""), alias_index) == name:
+                    genre_ref = resolve_name(conn.get("to", ""), alias_index)
+                    if f"[[{genre_ref}]]" not in content:
+                        content = _insert_before_next_section(content, "## Genre", f"- [[{genre_ref}]]")
 
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
         else:
-            genre_name = ""
-            for e in analysis.get("entities", []):
-                if e["type"] == "genre":
-                    genre_name = e["name"]
-                    break
+            album_links = "\n".join(f"- [[{a}]]" for a in album_names) if album_names else ""
+            genre_links = "\n".join(f"- [[{g}]]" for g in genre_names) if genre_names else ""
 
             content = f"""---
 tags: [artist]
@@ -341,36 +366,46 @@ updated: {today}
 # {name}
 
 ## Overview
-{entity.get('evidence', 'Extracted from song metadata.')}
+{overview}
 
 ## Songs
 - [[{song_title}]]
 
 ## Albums
-- [[{album_name}]] if album_name else ""
+{album_links}
 
 ## Genre
-- [[{genre_name}]] if genre_name else ""
+{genre_links}
 """
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
+            # Register aliases from LLM output
+            aliases = artist.get("aliases", [])
+            if aliases:
+                if name not in alias_index:
+                    alias_index[name] = [name]
+                for alias in aliases:
+                    if alias != name and alias not in alias_index[name]:
+                        alias_index[name].append(alias)
 
         created.append(os.path.relpath(filepath, wiki_dir))
 
     return created
 
 
-def _generate_album_entity(analysis: Dict, song_title: str, artist_names: List[str], wiki_dir: str) -> List[str]:
+def _generate_album_entity(analysis: Dict, song_title: str, wiki_dir: str, alias_index: Dict[str, List[str]] = None, connections: List[Dict] = None) -> List[str]:
     """Create or update album entity pages. Returns list of relative page paths."""
+    alias_index = alias_index or {}
+    connections = connections or []
     created = []
     today = datetime.now().strftime("%Y-%m-%d")
+    artist_names = [resolve_name(a["name"], alias_index) for a in analysis.get("artists", [])]
 
-    for entity in analysis.get("entities", []):
-        if entity["type"] != "album":
-            continue
-
-        name = entity["name"]
+    for album in analysis.get("albums", []):
+        llm_name = album["name"]
+        name = resolve_name(llm_name, alias_index)
+        overview = album.get("overview", "Extracted from song metadata.")
         filepath = os.path.join(wiki_dir, "wiki", "entities", "albums", f"{name}.md")
 
         if os.path.exists(filepath):
@@ -379,11 +414,17 @@ def _generate_album_entity(analysis: Dict, song_title: str, artist_names: List[s
 
             if f"[[{song_title}]]" not in content:
                 content = re.sub(r"(updated:\s*)\S+", rf"\g<1>{today}", content, count=1)
-                if "## Songs" in content:
-                    content = content.replace("## Songs\n", f"## Songs\n- [[{song_title}]]\n")
+                content = _insert_before_next_section(content, "## Songs", f"- [[{song_title}]]")
                 for a in artist_names:
-                    if f"[[{a}]]" not in content and "## Artist" in content:
-                        content = content.replace("## Artist\n", f"## Artist\n- [[{a}]]\n")
+                    if f"[[{a}]]" not in content:
+                        content = _insert_before_next_section(content, "## Artist", f"- [[{a}]]")
+
+            # Process connections: part_of
+            for conn in connections:
+                if conn.get("type") == "part_of" and resolve_name(conn.get("to", ""), alias_index) == name:
+                    song_ref = resolve_name(conn.get("from", ""), alias_index)
+                    if f"[[{song_ref}]]" not in content:
+                        content = _insert_before_next_section(content, "## Songs", f"- [[{song_ref}]]")
 
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -398,7 +439,7 @@ updated: {today}
 # {name}
 
 ## Overview
-{entity.get('evidence', 'Extracted from song metadata.')}
+{overview}
 
 ## Songs
 - [[{song_title}]]
@@ -409,22 +450,32 @@ updated: {today}
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
+            # Register aliases from LLM output
+            aliases = album.get("aliases", [])
+            if aliases:
+                if name not in alias_index:
+                    alias_index[name] = [name]
+                for alias in aliases:
+                    if alias != name and alias not in alias_index[name]:
+                        alias_index[name].append(alias)
 
         created.append(os.path.relpath(filepath, wiki_dir))
 
     return created
 
 
-def _generate_genre_entity(analysis: Dict, song_title: str, artist_names: List[str], wiki_dir: str) -> List[str]:
+def _generate_genre_entity(analysis: Dict, song_title: str, wiki_dir: str, alias_index: Dict[str, List[str]] = None, connections: List[Dict] = None) -> List[str]:
     """Create or update genre entity pages. Returns list of relative page paths."""
+    alias_index = alias_index or {}
+    connections = connections or []
     created = []
     today = datetime.now().strftime("%Y-%m-%d")
+    artist_names = [resolve_name(a["name"], alias_index) for a in analysis.get("artists", [])]
 
-    for entity in analysis.get("entities", []):
-        if entity["type"] != "genre":
-            continue
-
-        name = entity["name"]
+    for genre in analysis.get("genres", []):
+        llm_name = genre["name"]
+        name = resolve_name(llm_name, alias_index)
+        overview = genre.get("overview", "Extracted from song metadata.")
         filepath = os.path.join(wiki_dir, "wiki", "entities", "genres", f"{name}.md")
 
         if os.path.exists(filepath):
@@ -433,11 +484,17 @@ def _generate_genre_entity(analysis: Dict, song_title: str, artist_names: List[s
 
             if f"[[{song_title}]]" not in content:
                 content = re.sub(r"(updated:\s*)\S+", rf"\g<1>{today}", content, count=1)
-                if "## Songs" in content:
-                    content = content.replace("## Songs\n", f"## Songs\n- [[{song_title}]]\n")
+                content = _insert_before_next_section(content, "## Songs", f"- [[{song_title}]]")
                 for a in artist_names:
-                    if f"[[{a}]]" not in content and "## Artists" in content:
-                        content = content.replace("## Artists\n", f"## Artists\n- [[{a}]]\n")
+                    if f"[[{a}]]" not in content:
+                        content = _insert_before_next_section(content, "## Artists", f"- [[{a}]]")
+
+            # Process connections: similar_style
+            for conn in connections:
+                if conn.get("type") == "similar_style" and resolve_name(conn.get("to", ""), alias_index) == name:
+                    artist_ref = resolve_name(conn.get("from", ""), alias_index)
+                    if f"[[{artist_ref}]]" not in content:
+                        content = _insert_before_next_section(content, "## Artists", f"- [[{artist_ref}]]")
 
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -452,7 +509,7 @@ updated: {today}
 # {name}
 
 ## Overview
-{entity.get('evidence', 'Extracted from song metadata.')}
+{overview}
 
 ## Songs
 - [[{song_title}]]
@@ -463,28 +520,132 @@ updated: {today}
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
+            # Register aliases from LLM output
+            aliases = genre.get("aliases", [])
+            if aliases:
+                if name not in alias_index:
+                    alias_index[name] = [name]
+                for alias in aliases:
+                    if alias != name and alias not in alias_index[name]:
+                        alias_index[name].append(alias)
 
         created.append(os.path.relpath(filepath, wiki_dir))
 
     return created
 
 
+def _process_orphaned_connections(connections: List[Dict], analysis: Dict, wiki_dir: str, alias_index: Dict[str, List[str]] = None) -> List[str]:
+    """Process connections that reference entities not in the current analysis.
+    Creates stub files for orphaned entities and returns their paths."""
+    alias_index = alias_index or {}
+    created = []
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Collect all entity names already in the analysis
+    existing_names = set()
+    for a in analysis.get("artists", []):
+        existing_names.add(resolve_name(a["name"], alias_index))
+    for a in analysis.get("albums", []):
+        existing_names.add(resolve_name(a["name"], alias_index))
+    for g in analysis.get("genres", []):
+        existing_names.add(resolve_name(g["name"], alias_index))
+
+    for conn in connections:
+        conn_type = conn.get("type", "")
+        from_name = resolve_name(conn.get("from", ""), alias_index)
+        to_name = resolve_name(conn.get("to", ""), alias_index)
+
+        if conn_type == "performed_by":
+            # song → artist: check if the artist is orphaned
+            if to_name not in existing_names:
+                filepath = os.path.join(wiki_dir, "wiki", "entities", "artists", f"{to_name}.md")
+                if not os.path.exists(filepath):
+                    content = f"""---
+tags: [artist]
+created: {today}
+updated: {today}
+---
+
+# {to_name}
+
+## Overview
+Referenced via connections from {from_name}.
+
+## Songs
+- [[{from_name}]]
+"""
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(content)
+                created.append(os.path.relpath(filepath, wiki_dir))
+                existing_names.add(to_name)
+
+        elif conn_type == "part_of":
+            # song → album: check if the album is orphaned
+            if to_name not in existing_names:
+                filepath = os.path.join(wiki_dir, "wiki", "entities", "albums", f"{to_name}.md")
+                if not os.path.exists(filepath):
+                    content = f"""---
+tags: [album]
+created: {today}
+updated: {today}
+---
+
+# {to_name}
+
+## Overview
+Referenced via connections from {from_name}.
+
+## Songs
+- [[{from_name}]]
+"""
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(content)
+                created.append(os.path.relpath(filepath, wiki_dir))
+                existing_names.add(to_name)
+
+        elif conn_type == "similar_style":
+            # artist → genre: check if the genre is orphaned
+            if to_name not in existing_names:
+                filepath = os.path.join(wiki_dir, "wiki", "entities", "genres", f"{to_name}.md")
+                if not os.path.exists(filepath):
+                    content = f"""---
+tags: [genre]
+created: {today}
+updated: {today}
+---
+
+# {to_name}
+
+## Overview
+Referenced via connections from {from_name}.
+
+## Artists
+- [[{from_name}]]
+"""
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(content)
+                created.append(os.path.relpath(filepath, wiki_dir))
+                existing_names.add(to_name)
+
+    return created
+
+
 def _insert_before_next_section(content: str, after_heading: str, new_line: str) -> str:
-    """Insert a line after a heading, before the next section or end of that section."""
+    """Insert a line after a heading, skipping blank lines, before the first content line."""
     lines = content.split("\n")
-    insert_idx = None
     for i, line in enumerate(lines):
         if line.strip() == after_heading:
-            for j in range(i + 1, len(lines)):
-                if lines[j].startswith("## ") or lines[j].startswith("### "):
-                    insert_idx = j
-                    break
-            if insert_idx is None:
-                insert_idx = len(lines)
-            break
-    if insert_idx is not None:
-        lines.insert(insert_idx, new_line.rstrip("\n"))
-    return "\n".join(lines)
+            # Skip blank lines after heading
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == "":
+                j += 1
+            insert_idx = j
+            lines.insert(insert_idx, new_line.rstrip("\n"))
+            return "\n".join(lines)
+    return content
 
 
 def _update_index_and_log(song_meta: Dict, song_entity_path: str, entity_pages: List[str], wiki_dir: str) -> None:
@@ -497,6 +658,13 @@ def _update_index_and_log(song_meta: Dict, song_entity_path: str, entity_pages: 
         with open(index_path, "r", encoding="utf-8") as f:
             index_content = f.read()
 
+        # Add raw song to Raw section
+        bvid = song_meta.get("bvid", "")
+        if bvid:
+            raw_link = f"- [[{bvid}]]\n"
+            if raw_link not in index_content:
+                index_content = _insert_before_next_section(index_content, "## Raw", raw_link)
+
         # Add song to Songs section
         song_name = os.path.splitext(os.path.basename(song_entity_path))[0]
         song_link = f"- [[{song_name}]]\n"
@@ -508,11 +676,12 @@ def _update_index_and_log(song_meta: Dict, song_entity_path: str, entity_pages: 
             entity_name = os.path.splitext(os.path.basename(ep))[0]
             entity_link = f"- [[{entity_name}]]\n"
             if entity_link not in index_content:
-                if "/artists/" in ep:
+                ep_normalized = ep.replace("\\", "/")
+                if "/artists/" in ep_normalized:
                     index_content = _insert_before_next_section(index_content, "## Artists", entity_link)
-                elif "/genres/" in ep:
+                elif "/genres/" in ep_normalized:
                     index_content = _insert_before_next_section(index_content, "## Genres", entity_link)
-                elif "/albums/" in ep:
+                elif "/albums/" in ep_normalized:
                     index_content = _insert_before_next_section(index_content, "## Albums", entity_link)
 
         with open(index_path, "w", encoding="utf-8") as f:
@@ -560,11 +729,10 @@ def ingest_song(song_meta: Dict, wiki_dir: Optional[str] = None) -> Dict:
         llm_succeeded = True
     except (json.JSONDecodeError, ValueError):
         analysis = {
-            "song_summary": raw_content[:200],
-            "artist_info": "",
-            "album_info": "",
-            "genre_info": "",
-            "entities": [],
+            "song": {"title": song_meta.get("title", ""), "overview": raw_content[:200]},
+            "artists": [],
+            "albums": [],
+            "genres": [],
             "connections": [],
         }
         llm_succeeded = False
@@ -575,43 +743,82 @@ def ingest_song(song_meta: Dict, wiki_dir: Optional[str] = None) -> Dict:
 
     if not llm_succeeded:
         analysis = {
-            "song_summary": raw_content[:200],
-            "artist_info": "",
-            "album_info": "",
-            "genre_info": "",
-            "entities": [],
+            "song": {"title": song_meta.get("title", ""), "overview": raw_content[:200]},
+            "artists": [],
+            "albums": [],
+            "genres": [],
             "connections": [],
         }
 
-    # Step 5: Generate song entity
-    song_entity_path = _generate_song_entity(song_meta, analysis, wiki_dir)
+    # Ensure song title from metadata
+    if not analysis.get("song", {}).get("title"):
+        analysis.setdefault("song", {})["title"] = song_meta.get("title", "unknown")
 
-    # Step 6: Generate artist/album/genre entities
-    title = song_meta.get("title", "unknown")
-    artist_names = [e["name"] for e in analysis.get("entities", []) if e["type"] == "artist"]
-    if not artist_names and song_meta.get("artist"):
-        artist_names = [song_meta["artist"]]
+    # Step 5: Load alias index
+    alias_index = load_alias_index(wiki_dir)
 
-    album_name = ""
-    for e in analysis.get("entities", []):
-        if e["type"] == "album":
-            album_name = e["name"]
-            break
-    if not album_name and song_meta.get("album"):
-        album_name = song_meta["album"]
+    # Step 6: Generate song entity
+    song_entity_path = _generate_song_entity(song_meta, analysis, wiki_dir, alias_index)
 
-    artist_pages = _generate_artist_entity(analysis, title, album_name, wiki_dir)
-    album_pages = _generate_album_entity(analysis, title, artist_names, wiki_dir)
-    genre_pages = _generate_genre_entity(analysis, title, artist_names, wiki_dir)
+    # Step 7: Generate artist/album/genre entities
+    title = analysis.get("song", {}).get("title", song_meta.get("title", "unknown"))
+    connections = analysis.get("connections", [])
+    artist_pages = _generate_artist_entity(analysis, title, wiki_dir, alias_index, connections)
+    album_pages = _generate_album_entity(analysis, title, wiki_dir, alias_index, connections)
+    genre_pages = _generate_genre_entity(analysis, title, wiki_dir, alias_index, connections)
 
-    all_entity_pages = artist_pages + album_pages + genre_pages
+    orphan_pages = _process_orphaned_connections(connections, analysis, wiki_dir, alias_index)
+    all_entity_pages = artist_pages + album_pages + genre_pages + orphan_pages
 
-    # Step 7: Update index and log
+    # Step 7.5: Rename audio file using LLM-analyzed artist names
+    audio_path = song_meta.get("local_file_path", "")
+    if audio_path and os.path.exists(audio_path):
+        artist_names = [
+            resolve_name(a["name"], alias_index)
+            for a in analysis.get("artists", [])
+        ]
+        # Filter out Unknown and empty, take first 3
+        artist_names = [a for a in artist_names if a and a != "Unknown"][:3]
+        if artist_names:
+            artist_part = "+".join(artist_names)
+            # Extract title and bvid from original filename
+            orig_basename = os.path.basename(audio_path)
+            # Parse: {old_artist}-{title}-{bvid}.mp3
+            base = orig_basename[:-4] if orig_basename.endswith(".mp3") else orig_basename
+            # Extract bvid from end
+            bvid_match = re.search(r"[_ ]?(BV[A-Za-z0-9]+)$", base)
+            bvid_str = bvid_match.group(1) if bvid_match else ""
+            if bvid_match:
+                base = base[: -len(bvid_match.group(0))]
+            # Split by dash: old_artist-title
+            parts = base.split("-", 1)
+            title_part = parts[1] if len(parts) >= 2 else parts[0]
+            # Build new filename
+            new_basename = f"{artist_part}-{title_part}-{bvid_str}.mp3" if bvid_str else f"{artist_part}-{title_part}.mp3"
+            new_path = os.path.join(os.path.dirname(audio_path), new_basename)
+            try:
+                os.rename(audio_path, new_path)
+                # Update raw material audio_file_path
+                with open(raw_path, "r", encoding="utf-8") as f:
+                    raw_content = f.read()
+                raw_content = raw_content.replace(
+                    f"audio_file_path: {audio_path}",
+                    f"audio_file_path: {new_path}",
+                )
+                with open(raw_path, "w", encoding="utf-8") as f:
+                    f.write(raw_content)
+            except OSError:
+                pass  # Skip rename on error
+
+    # Step 8: Update index and log
     _update_index_and_log(song_meta, song_entity_path, all_entity_pages, wiki_dir)
 
-    # Step 8: Update cache
+    # Step 9: Update cache
     if llm_succeeded:
         _update_cache(raw_path, song_entity_path, wiki_dir)
+
+    # Step 10: Save alias index
+    save_alias_index(alias_index, wiki_dir)
 
     return {
         "status": "ingested",

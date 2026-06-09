@@ -8,6 +8,12 @@ import {
   type KeyboardEvent,
 } from "react";
 
+const SLASH_COMMANDS = [
+  { command: "/reset-wiki", label: "重置知识库" },
+  { command: "/reset-memory", label: "重置用户记忆" },
+  { command: "/clear", label: "清屏" },
+];
+
 type Props = {
   onSubmit: (text: string) => void;
   disabled?: boolean;
@@ -21,8 +27,10 @@ export function CommandInput({
 }: Props) {
   const [value, setValue] = useState("");
   const [cursorLeft, setCursorLeft] = useState(0);
+  const [showMenu, setShowMenu] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const valueRef = useRef(value);
   valueRef.current = value;
 
@@ -39,12 +47,36 @@ export function CommandInput({
     syncCursor();
   }, [value, syncCursor]);
 
+  // Show menu when input starts with /
+  useEffect(() => {
+    setShowMenu(value === "/");
+  }, [value]);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!showMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showMenu]);
+
   const submit = useCallback(() => {
     const t = valueRef.current.trim();
     if (!t || disabled) return;
     onSubmit(t);
     setValue("");
+    setShowMenu(false);
   }, [disabled, onSubmit]);
+
+  const selectCommand = useCallback((command: string) => {
+    setValue(command);
+    setShowMenu(false);
+    inputRef.current?.focus();
+  }, []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -52,11 +84,33 @@ export function CommandInput({
       submit();
       return;
     }
+    if (e.key === "Escape" && showMenu) {
+      setShowMenu(false);
+      return;
+    }
     requestAnimationFrame(syncCursor);
   };
 
   return (
-    <div className="w-full rounded-xl border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] transition-all duration-200 focus-within:border-[rgba(129,140,248,0.3)] focus-within:bg-[rgba(255,255,255,0.06)]">
+    <div className="relative w-full rounded-xl border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] transition-all duration-200 focus-within:border-[rgba(129,140,248,0.3)] focus-within:bg-[rgba(255,255,255,0.06)]">
+      {showMenu && (
+        <div
+          ref={menuRef}
+          className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-[var(--glass-border)] bg-[rgba(30,30,40,0.95)] shadow-lg backdrop-blur-sm z-50 overflow-hidden"
+        >
+          {SLASH_COMMANDS.map((cmd) => (
+            <button
+              key={cmd.command}
+              type="button"
+              onClick={() => selectCommand(cmd.command)}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-[rgba(129,140,248,0.1)]"
+            >
+              <span className="font-mono text-[color:var(--color-primary)]">{cmd.command}</span>
+              <span className="text-[color:var(--color-on-surface-muted)]">{cmd.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <span className="shrink-0 select-none py-3 pl-3 text-[color:var(--color-primary)]" aria-hidden>
           ▸

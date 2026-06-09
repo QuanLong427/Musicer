@@ -11,7 +11,7 @@ from config import settings, PROJECT_ROOT
 logger = logging.getLogger(__name__)
 
 MEMORY_DATA_DIR = PROJECT_ROOT / "memory" / "data"
-TEMPLATE_DIR = PROJECT_ROOT / "memory" / "template"
+TEMPLATE_DIR = PROJECT_ROOT / "template" / "memory"
 TEMPLATE_PROFILE = TEMPLATE_DIR / "user_profile.md"
 DATA_PROFILE = MEMORY_DATA_DIR / "user_profile.md"
 HISTORY_FILE = MEMORY_DATA_DIR / "history.jsonl"

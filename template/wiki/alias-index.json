@@ -1,0 +1,11 @@
+{
+  "摇滚": ["摇滚", "rock", "rock music"],
+  "流行": ["流行", "pop", "pop music"],
+  "电子": ["电子", "electronic", "edm"],
+  "嘻哈": ["嘻哈", "hip-hop", "rap"],
+  "R&B": ["R&B", "rhythm and blues"],
+  "民谣": ["民谣", "folk"],
+  "古典": ["古典", "classical"],
+  "爵士": ["爵士", "jazz"],
+  "DJ": ["DJ", "DJ舞曲", "DJ混音", "电音DJ"]
+}

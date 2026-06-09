@@ -15,7 +15,7 @@ from config import PROJECT_ROOT
 
 # 路径常量
 MEMORY_DIR = PROJECT_ROOT / "memory"
-TEMPLATE_DIR = MEMORY_DIR / "template"
+TEMPLATE_DIR = PROJECT_ROOT / "template" / "memory"
 DATA_DIR = MEMORY_DIR / "data"
 HISTORY_FILE = DATA_DIR / "history.jsonl"
 PROFILE_FILE = DATA_DIR / "user_profile.md"
@@ -36,6 +36,7 @@ def _ensure_history_file():
         metadata = {
             "type": "metadata",
             "dream_offset": 0,
+            "clear_offset": 0,
             "created_at": datetime.now().isoformat(),
         }
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
@@ -134,6 +135,7 @@ def append_history(
     metadata = lines[0] if lines and lines[0].get("type") == "metadata" else {
         "type": "metadata",
         "dream_offset": 0,
+        "clear_offset": 0,
         "created_at": datetime.now().isoformat(),
     }
     dialogues = [l for l in lines if l.get("type") != "metadata"]
@@ -147,6 +149,7 @@ def append_history(
         dialogues = dialogues[overflow:]
         # 如果删除了已处理的记录，需要调整 offset
         metadata["dream_offset"] = max(0, metadata["dream_offset"] - overflow)
+        metadata["clear_offset"] = max(0, metadata["clear_offset"] - overflow)
 
     # 重写文件
     _write_all_lines([metadata] + dialogues)
@@ -182,3 +185,42 @@ def update_dream_offset(new_offset: int):
     if lines and lines[0].get("type") == "metadata":
         lines[0]["dream_offset"] = new_offset
         _write_all_lines(lines)
+
+
+def get_clear_offset() -> int:
+    """获取当前 clear_offset"""
+    lines = _read_all_lines()
+    if lines and lines[0].get("type") == "metadata":
+        return lines[0].get("clear_offset", 0)
+    return 0
+
+
+def update_clear_offset(new_offset: int):
+    """更新 clear_offset"""
+    _ensure_history_file()
+    lines = _read_all_lines()
+    if lines and lines[0].get("type") == "metadata":
+        lines[0]["clear_offset"] = new_offset
+        _write_all_lines(lines)
+
+
+def reset_memory():
+    """重置用户记忆为初始状态：重置 user_profile.md + 清空 history.jsonl"""
+    _ensure_dirs()
+
+    # 重置 user_profile.md 为模板内容
+    if TEMPLATE_PROFILE.exists():
+        PROFILE_FILE.write_text(
+            TEMPLATE_PROFILE.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    elif PROFILE_FILE.exists():
+        PROFILE_FILE.unlink()
+
+    # 清空 history.jsonl，仅保留 metadata 行
+    metadata = {
+        "type": "metadata",
+        "dream_offset": 0,
+        "clear_offset": 0,
+        "created_at": datetime.now().isoformat(),
+    }
+    _write_all_lines([metadata])
