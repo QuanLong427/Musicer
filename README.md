@@ -6,7 +6,7 @@
 
 AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于音乐。
 
-![image-20260607202556505](./assets/image-20260607202556505.png)
+![image-20260610105525929](./assets/image-20260610105525929.png)
 
 ![image-20260607202621362](./assets/image-20260607202621362.png)
 
@@ -15,29 +15,18 @@ AI Agent 驱动的 B站音频播放器。随时随地，想听就听，不止于
 ## Features
 
 - **LangGraph ReAct Agent** — LLM 自主决策工具调用，多轮迭代推理，SSE 流式输出
-
 - **前端 LLM 配置** — 齿轮按钮打开设置弹窗，随时切换 API Key / Base URL / Model，无需重启
-
 - **双模式切换** — 本地曲库搜索 / B站云端搜索
-
 - **云端本地优先** — 云端 ADD 自动检测本地已有文件，避免重复转换
-
 - **B站全链路** — 视频搜索（WBI 签名）→ 转 MP3 下载 → 弹幕叠加播放 → 自动入库知识库
-
 - **弹幕播放** — 播放 B站歌曲时实时叠加弹幕，同步播放进度
-
 - **分层记忆系统** — 短期（对话）/ 中期（JSONL 历史）/ 长期（用户画像），Dream 引擎自动沉淀
-
 - **LLM-Wiki 知识库** — 基于 Karpathy llm-wiki 方法论，自动消化入库歌曲为结构化知识库，并构建一个知识图谱
 
   ![image-20260609193141187](./assets/image-20260609193141187.png)
-
 - **场景感知推荐** — 自定义场景（编程/跑步/睡觉等），每个场景独立维护偏好
-
 - **知识库检索子 Agent** — 独立 LangGraph 子图，用户画像上下文感知进行个性化推荐
-
 - **画像增强搜索** — 推荐类查询自动注入用户画像中的流派/歌手到搜索关键词
-
 - **斜杠命令** — 聊天中输入 `/reset-wiki`、`/reset-memory`、`/clear` 等管理命令
 
 ## Tech Stack
@@ -170,14 +159,16 @@ Main Agent (LLM 决策)
 - ffmpeg（视频转音频依赖）
 - bv2mp3：`npm install -g bv2mp3`
 
-### 1. 克隆项目
+### 手动安装方式
+
+#### 1. 克隆项目
 
 ```bash
 git clone https://github.com/pstrm-dev/musicer.git
 cd musicer
 ```
 
-### 2. 配置环境变量
+#### 2. 配置环境变量
 
 前后端配置已分离，各自读取自己目录下的配置文件：
 
@@ -200,7 +191,7 @@ OPENAI_API_KEY=your-api-key-here
 
 也可以启动后通过前端齿轮按钮（⚙）在线配置 LLM 参数，配置会自动写入 `backend/.env.local`。
 
-### 3. 安装依赖
+#### 3. 安装依赖
 
 ```bash
 # 前端依赖
@@ -213,7 +204,7 @@ uv pip install -r requirements.txt
 cd ..
 ```
 
-### 4. 启动服务
+#### 4. 启动服务
 
 需要同时运行前后端两个服务（开两个终端窗口）：
 
@@ -231,11 +222,15 @@ cd backend
 npm run dev
 ```
 
-### 5. 打开浏览器
+#### 5. 打开浏览器
 
 访问 http://localhost:3002
 
 首次使用点击左上角齿轮按钮 ⚙ 配置 LLM API Key。
+
+### Claude/OpenClaw/Hermes自动安装
+
+> 输入: 帮我安装并启动项目:https://github.com/QuanLong427/Musicer.git
 
 ## Port Configuration
 
@@ -363,12 +358,12 @@ Musicer/
 
 在聊天中输入 `/命令名` 执行管理操作：
 
-| 命令              | 说明                           |
-| ----------------- | ------------------------------ |
-| `/reset-wiki`     | 重置 LLM-Wiki 知识库           |
-| `/reset-memory`   | 重置用户记忆（画像+历史）       |
-| `/clear`          | 清空屏幕（保留持久化数据）      |
-| `/help`           | 显示所有可用命令               |
+| 命令              | 说明                       |
+| ----------------- | -------------------------- |
+| `/reset-wiki`   | 重置 LLM-Wiki 知识库       |
+| `/reset-memory` | 重置用户记忆（画像+历史）  |
+| `/clear`        | 清空屏幕（保留持久化数据） |
+| `/help`         | 显示所有可用命令           |
 
 ## Platform
 
@@ -384,7 +379,13 @@ Musicer/
 docker-compose up
 ```
 
+## Acknowledgements
+
+本项目视频转音频使用项目:https://github.com/wxsms/bilibili-video2mp3.git
+
 ## License
+
+特别说明: 本项目仅供自用或者学习参考。
 
 本项目采用 [MIT](LICENSE) 协议。
 
